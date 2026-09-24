@@ -1,0 +1,44 @@
+[gd_scene format=3 uid="uid://baeh1tj0j7gr3"]
+
+[ext_resource type="Script" uid="uid://blhk841qac1jy" path="res://scripts/main.gd" id="1_h2yge"]
+[ext_resource type="Script" uid="uid://d3i1mwm2k4u5r" path="res://scripts/load_heightmap.gd" id="1_ig7tw"]
+[ext_resource type="PackedScene" uid="uid://bs72ogkvdd7d6" path="res://addons/brackeys-proto-controller/proto_controller/proto_controller.tscn" id="2_0xm2m"]
+
+[sub_resource type="HeightMapShape3D" id="HeightMapShape3D_cecvm"]
+
+[sub_resource type="ArrayMesh" id="ArrayMesh_0xm2m"]
+
+[sub_resource type="ProceduralSkyMaterial" id="ProceduralSkyMaterial_x1pjr"]
+
+[sub_resource type="Sky" id="Sky_d0jkc"]
+sky_material = SubResource("ProceduralSkyMaterial_x1pjr")
+
+[sub_resource type="Environment" id="Environment_cecvm"]
+background_mode = 2
+sky = SubResource("Sky_d0jkc")
+
+[node name="Main" type="Node3D" unique_id=2143192203]
+script = ExtResource("1_h2yge")
+
+[node name="HUD" type="Label" parent="." unique_id=174690582]
+offset_right = 40.0
+offset_bottom = 23.0
+
+[node name="Heightmap" type="StaticBody3D" parent="." unique_id=2130648582]
+script = ExtResource("1_ig7tw")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Heightmap" unique_id=146856744]
+shape = SubResource("HeightMapShape3D_cecvm")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="Heightmap" unique_id=414657148]
+mesh = SubResource("ArrayMesh_0xm2m")
+
+[node name="ProtoController" parent="." unique_id=467149520 instance=ExtResource("2_0xm2m")]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 10, 0)
+can_sprint = true
+can_freefly = true
+sprint_speed = 15.0
+freefly_speed = 500.0
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." unique_id=1509426407]
+environment = SubResource("Environment_cecvm")
