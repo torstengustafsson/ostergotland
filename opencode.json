@@ -1,0 +1,16 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "permission": {
+    "read": "allow",
+    "edit": {
+      "*": "allow",
+      "opencode.json": "deny"
+    },
+    "bash": {
+      "*": "allow",
+      "git *": "deny",
+      "cd /home/torsten/Godot/*": "deny",
+      "cd /home/torsten/Godot/ostergotland*": "allow"
+    }
+  }
+}
