@@ -321,12 +321,22 @@ func _stroke(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 ## closing vertex of a closed way, so a ring is size - 1 edges and the shader's
 ## crossing test closes it by itself.
 ##
-## The ring goes in whole or not at all, and only if every side is within reach.
+## The ring goes in whole or not at all, and only if part of it is within reach.
 ## The crossing test counts how many ring sides a ray crosses, so one missing side
 ## inverts the answer everywhere it used to close the ring -- the fill then floods
 ## to infinity past the feature's real edge, which reads as a straight coloured
 ## line across the map. Skipping a ring that does not fit is the only way to keep
 ## that test meaningful under the cap.
+##
+## **Reach is measured to the ring's *nearest* side, not its farthest**, which is
+## the whole question for a lake. A ring is uploaded whole either way, so nothing
+## about the fill is gained by holding back its far half; what reach decides is
+## whether *any* of it could be on screen, and a fragment inside a lake is inside
+## it whether or not its opposite shore is 12 km away. Testing the farthest side
+## instead caps a drawable area at about twice the radius -- 3.6 km across at
+## DETAIL_RADIUS -- and that is exactly why Roxen (12.6 km) and Glan (9.6 km) were
+## never drawn at any position on the map. The reach that *is* uploaded is still
+## the farthest one, so the shader's gate stays exact for every fragment it draws.
 func _fill(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 		reach_m: float) -> void:
 	for feature in features:
@@ -352,7 +362,7 @@ func _fill(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 			farthest = maxf(farthest, distance)
 			ring.append(Vector4(points[i].x, points[i].y,
 					points[i + 1].x, points[i + 1].y))
-		if farthest > reach_m:
+		if nearest > reach_m:
 			continue
 		areas.add_ring(ring, attr, nearest - bonus, farthest)
 

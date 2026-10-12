@@ -1,7 +1,7 @@
 class_name OsmDataset
 extends RefCounted
 
-## Loads an OSM dump (converted to .json with osm_to_json.py, e.g. ways.json),
+## Loads map data (converted to .json with osm_to_json.py, e.g. ways.json),
 ## keeping everything so ways can be picked by tag at runtime:
 ##   bounds:    OsmBounds       { min_lon, min_lat, max_lon, max_lat }
 ##   ways:      Array[OsmWay]   [{ id: String, nd: [node_id, ...], tags: {...} }]
@@ -10,6 +10,11 @@ extends RefCounted
 ##                              (e.g. "roads", "railways", "buildings",
 ##                              "water", "forests")
 ## Node ids are strings.
+##
+## One dataset holds any number of source files: append_file() adds one with all
+## its ids prefixed by the source's name, which is what stops two extracts from
+## colliding on node 1. MapData does that for a whole directory; load() is the
+## single-file version and replaces whatever was in the dataset.
 ##
 ## Adding a new kind of feature (fields, power lines, ...) means subclassing
 ## OsmFeature, appending it to `feature_classes` and calling extract_features()
@@ -26,28 +31,97 @@ var _nodes: Dictionary = {}
 var _ways_by_id: Dictionary = {}
 
 
+## Loads one source file into a dataset of its own, replacing anything already in
+## it, and extracts its features. MapData appends instead, so that several files
+## can share one dataset and one extraction over all of them.
 func load(path: String) -> bool:
+	clear()
+	var result := append_file(path, "")
+	if not result["ok"]:
+		return false
+	extract_features()
+	return true
+
+
+## Adds one source file's nodes, ways and relations to this dataset without
+## touching `features`, so a caller can append every file first and then extract
+## once. `p_prefix` (the source's name) is prepended to every id, and a prefix
+## means the same thing to the nodes, the ways and the relations' member
+## references, so nothing from another source can be resolved by accident.
+##
+## Returns `{"ok": bool, "replaces": PackedStringArray}`. `replaces` is the
+## file's own list of way ids it supersedes, which MapData acts on; nothing here
+## does, because a file cannot know which of the others it is replacing.
+func append_file(path: String, p_prefix: String) -> Dictionary:
 	var text := FileAccess.get_file_as_string(path)
 	if text.is_empty():
 		push_error("OsmDataset: could not read %s" % path)
-		return false
+		return {"ok": false, "replaces": PackedStringArray()}
 
 	var parsed = JSON.parse_string(text)
 	if not parsed is Dictionary:
 		push_error("OsmDataset: invalid JSON in %s" % path)
-		return false
+		return {"ok": false, "replaces": PackedStringArray()}
 
-	bounds = OsmBounds.from_dict(parsed.get("bounds", {}))
-	_nodes = parsed.get("nodes", {})
-	relations = parsed.get("relations", [])
-
-	ways.clear()
+	var prefix := "" if p_prefix.is_empty() else p_prefix + ":"
+	_merge_bounds(OsmBounds.from_dict(parsed.get("bounds", {})))
+	var source_nodes: Dictionary = parsed.get("nodes", {})
+	for id in source_nodes:
+		_nodes[prefix + str(id)] = source_nodes[id]
 	for data in parsed.get("ways", []):
 		if data is Dictionary:
-			ways.append(OsmWay.from_dict(data))
+			ways.append(OsmWay.from_dict(data, prefix))
+	for relation in parsed.get("relations", []):
+		if relation is Dictionary:
+			relations.append(_prefixed_relation(relation, prefix))
 
-	extract_features()
-	return true
+	var replaces := PackedStringArray()
+	for entry in parsed.get("replaces", []):
+		replaces.append(str(entry))
+	return {"ok": true, "replaces": replaces}
+
+
+## Empties the dataset, so the same object can be filled from a different set of
+## sources.
+func clear() -> void:
+	bounds = null
+	ways.clear()
+	relations.clear()
+	features.clear()
+	_nodes.clear()
+	_ways_by_id.clear()
+
+
+## Union of what the sources cover, which for a single file is its own `<bounds>`.
+## Only ever a record of the download(s): the terrain's extent is the DEM's, and
+## is what has to be projected through.
+func _merge_bounds(source: OsmBounds) -> void:
+	if not source.is_valid():
+		return
+	if bounds == null:
+		bounds = source
+		return
+	bounds.min_lon = minf(bounds.min_lon, source.min_lon)
+	bounds.min_lat = minf(bounds.min_lat, source.min_lat)
+	bounds.max_lon = maxf(bounds.max_lon, source.max_lon)
+	bounds.max_lat = maxf(bounds.max_lat, source.max_lat)
+
+
+## A relation with its own id and its member references prefixed, which is what
+## keeps a multipolygon's members resolving to its own source's ways.
+func _prefixed_relation(data: Dictionary, prefix: String) -> Dictionary:
+	if prefix.is_empty():
+		return data
+	var out := data.duplicate()
+	out["id"] = prefix + str(data.get("id", ""))
+	var members: Array = []
+	for member in data.get("members", []):
+		if member is Dictionary:
+			var prefixed: Dictionary = member.duplicate()
+			prefixed["ref"] = prefix + str(member.get("ref", ""))
+			members.append(prefixed)
+	out["members"] = members
+	return out
 
 
 ## (Re)builds `features` from `ways` **and from the multipolygon relations**, using

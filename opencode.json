@@ -9,8 +9,8 @@
     "bash": {
       "*": "allow",
       "git *": "deny",
-      "cd /home/torsten/Godot/*": "deny",
-      "cd /home/torsten/Godot/ostergotland*": "allow"
+      "cd /home/torsten/godot/*": "deny",
+      "cd /home/torsten/godot/ostergotland*": "allow"
     }
   }
 }

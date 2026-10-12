@@ -9,11 +9,14 @@ var nd: Array[String] = []
 var tags: Dictionary = {}
 
 
-static func from_dict(data: Dictionary) -> OsmWay:
+## `prefix` is prepended to the way's id and to every node reference, so ways
+## from two sources can share a node id without being confused for each other.
+## See OsmDataset.append_file.
+static func from_dict(data: Dictionary, prefix: String = "") -> OsmWay:
 	var way := OsmWay.new()
-	way.id = str(data.get("id", ""))
+	way.id = prefix + str(data.get("id", ""))
 	for ref in data.get("nd", []):
-		way.nd.append(str(ref))
+		way.nd.append(prefix + str(ref))
 	way.tags = data.get("tags", {})
 	return way
 

@@ -7,7 +7,9 @@ extends Node
 const SPAWN_LONLAT := Vector2(15.96651, 58.55193)
 const GROUND_PROBE := 500.0
 
-var osm_dataset: OsmDataset = OsmDataset.new()
+## Every vector source in assets/mapdata, merged into one dataset: the OSM
+## extract, plus whatever else has been added since. See MapData.
+var map_data: MapData = MapData.new()
 var osm_index: OsmQuadtree = OsmQuadtree.new()
 ## The terrain's lon/lat -> world XZ chain, built from the heightmap's own extent.
 ## A member because the spawn is a lon/lat and this is what turns it into metres.
@@ -26,20 +28,20 @@ var _spawn_settled := false
 func _ready() -> void:
 	var start_time = Time.get_ticks_msec()
 
-	osm_dataset.load("assets/heightmap/ways.json")
-
+	map_data.load_dir()
 	var load_time = Time.get_ticks_msec()
-	print("Time to load ways.json: ", str((load_time - start_time) / 1000.0), " seconds")
+	print("Time to load map data: ", str((load_time - start_time) / 1000.0), " seconds ",
+			map_data.stats())
 
 	# The terrain's own lon/lat box, which heightmap.gd read to work out its
-	# scale, is what the features have to be projected through: the download's
+	# scale, is what the features have to be projected through: a download's
 	# own bounds are a slightly different box and would put them off the ground.
 	projection = OsmProjection.from_terrain(
 		$Heightmap.bounds,
 		$Heightmap.width,
 		$Heightmap.height,
 		Vector2($Heightmap.scale.x, $Heightmap.scale.z))
-	osm_index.build(osm_dataset, projection)
+	osm_index.build(map_data.dataset, projection)
 
 	var index_time = Time.get_ticks_msec()
 	print("Time to index features: ", str((index_time - load_time) / 1000.0), " seconds")
