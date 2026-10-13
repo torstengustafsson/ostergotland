@@ -7,7 +7,7 @@ extends StaticBody3D
 ## from the DEM's own lon/lat extent (see OsmBounds.cell_size_m) and its Y scale
 ## is HEIGHT_SCALE, so nothing here hardcodes a scale.
 ##
-## Row 0 of the grid is the northern edge and sits at the highest world Z: +X is
+## Row 0 of the grid is the northern edge and sits at the **lowest** world Z: +X is
 ## east and +Z is south, the same convention OsmProjection uses. Several places
 ## below depend on it; see the mirror notes on _build_shape, _normal_at,
 ## _build_mesh and _tile_world_rect.
@@ -212,7 +212,7 @@ func _lod_tiles() -> int:
 func world_to_pixel(world: Vector3) -> Vector2:
 	return Vector2(
 		world.x / cell_size.x + (width - 1) * 0.5,
-		(height - 1) * 0.5 - world.z / cell_size.y)
+		world.z / cell_size.y + (height - 1) * 0.5)
 
 
 ## Terrain height at a world position, in metres. Needs no physics, so it works
@@ -289,10 +289,10 @@ func _build_tile(key: Vector2i, stride: int = 1) -> void:
 
 	# The tile's centre in this node's local space, which is the source grid
 	# shifted so the whole grid is centred on the origin, with the row index
-	# counted *down* from the north edge so that world +Z is south.
+	# counted *up* from the north edge so that world +Z is south.
 	var center := Vector3(
 		x0 + (cols - 1) * 0.5 - (width - 1) * 0.5, 0.0,
-		(height - 1) * 0.5 - (y0 + (tile_rows - 1) * 0.5))
+		(y0 + (tile_rows - 1) * 0.5) - (height - 1) * 0.5)
 
 	var mesh_instance := MeshInstance3D.new()
 	mesh_instance.mesh = _build_mesh(x0, y0, cols, tile_rows, center, stride)
@@ -339,7 +339,7 @@ func _build_mesh(x0: int, y0: int, cols: int, tile_rows: int, center: Vector3,
 			var y := mini(oy * stride, tile_rows - 1)
 			var pixel := Vector2i(x0 + x, y0 + y)
 			vertices[i] = Vector3(float(x) - x_center, _height(pixel.x, pixel.y),
-					y_center - float(y))
+					float(y) - y_center)
 			# From the full resolution gradient either way, so a coarse tile is lit
 			# like a fine one rather than flattened where it is least noticeable.
 			normals[i] = _normal_at(pixel)
@@ -349,10 +349,10 @@ func _build_mesh(x0: int, y0: int, cols: int, tile_rows: int, center: Vector3,
 				float(pixel.x) / float(width - 1),
 				1.0 - float(pixel.y) / float(height - 1))
 
-	# Clockwise seen from above, so the front faces point up. The row index
-	# counts *down* the z axis, which flips the grid's handedness, so this is the
-	# other way round from the unmirrored grid: the reverse order renders a fully
-	# culled, invisible terrain.
+	# Clockwise seen from above, so the front faces point up. The row index counts
+	# *up* the z axis here, which is the same handedness the unmirrored grid has, so
+	# this is the original order: the reverse renders a fully culled, invisible
+	# terrain whose collision still works.
 	var triangles := PackedInt32Array()
 	triangles.resize((out_cols - 1) * (out_rows - 1) * 6)
 	var at := 0
@@ -360,11 +360,11 @@ func _build_mesh(x0: int, y0: int, cols: int, tile_rows: int, center: Vector3,
 		for x in out_cols - 1:
 			var i0 := y * out_cols + x
 			triangles[at] = i0
-			triangles[at + 1] = i0 + out_cols
-			triangles[at + 2] = i0 + 1
+			triangles[at + 1] = i0 + 1
+			triangles[at + 2] = i0 + out_cols
 			triangles[at + 3] = i0 + 1
-			triangles[at + 4] = i0 + out_cols
-			triangles[at + 5] = i0 + out_cols + 1
+			triangles[at + 4] = i0 + out_cols + 1
+			triangles[at + 5] = i0 + out_cols
 			at += 6
 
 	var arrays := []
@@ -383,10 +383,9 @@ func _build_mesh(x0: int, y0: int, cols: int, tile_rows: int, center: Vector3,
 ## a falling player) could slip through. Reading outside the grid clamps to the
 ## border, which keeps the short tiles at the edge aligned.
 ##
-## The rows go in **reversed**: a HeightMapShape3D data index runs along +Z in
-## its owner's local space while the mesh's local z counts *down* the source
-## rows, so writing them in order would put every collision height against the
-## wrong end of the tile.
+## The rows go in in order, like the mesh's own z: the row index counts *up* the z
+## axis, which is the direction a HeightMapShape3D data index already runs in.
+## Reversing them puts every collision height against the wrong end of the tile.
 func _build_shape(x0: int, y0: int, cols: int, tile_rows: int) -> HeightMapShape3D:
 	var map_width := cols + 2
 	var map_depth := tile_rows + 2
@@ -395,7 +394,7 @@ func _build_shape(x0: int, y0: int, cols: int, tile_rows: int) -> HeightMapShape
 	for y in map_depth:
 		for x in map_width:
 			var pixel := Vector2i(clampi(x0 + x - 1, 0, width - 1), clampi(y0 + y - 1, 0, height - 1))
-			data[(map_depth - 1 - y) * map_width + x] = _height(pixel.x, pixel.y)
+			data[y * map_width + x] = _height(pixel.x, pixel.y)
 
 	var shape := HeightMapShape3D.new()
 	shape.map_width = map_width
@@ -412,15 +411,14 @@ func _build_shape(x0: int, y0: int, cols: int, tile_rows: int) -> HeightMapShape
 ## X scale *is* the cell size in metres, so the cell size cancels out of the
 ## horizontal part and only the middle component scales with HEIGHT_SCALE.
 ##
-## The z term is `front - back` rather than `back - front` because the mirror
-## swapped which neighbour is nearer: the row *below* the pixel is now at higher
-## local z. Get it backwards and the normals point down.
+## The z term is `back - front` because the row *below* the pixel is at higher
+## local z: get it backwards and the normals point down.
 func _normal_at(pixel: Vector2i) -> Vector3:
 	var left := _height(pixel.x - 1, pixel.y)
 	var right := _height(pixel.x + 1, pixel.y)
 	var back := _height(pixel.x, pixel.y - 1)
 	var front := _height(pixel.x, pixel.y + 1)
-	return Vector3(left - right, 2.0 * HEIGHT_SCALE, front - back).normalized()
+	return Vector3(left - right, 2.0 * HEIGHT_SCALE, back - front).normalized()
 
 
 ## A source pixel, clamped to the grid, as a height in metres. The single place
@@ -450,16 +448,16 @@ func _grid_origin_offset() -> Vector2:
 ##
 ## The origin offset is subtracted because without it the rect is measured from
 ## the grid's own corner, which on a 23 km grid puts even the tiles under the
-## focus 6 km "away" and streams the wrong corner. The row term is negated *and*
-## shifted because row 0 is the north edge and so sits at the highest world z:
-## tile row 0 covers the z range from +offset down to +offset - one tile. Get it
-## wrong and a mirrored disc is streamed.
+## focus 6 km "away" and streams the wrong corner. The row term starts at row 0,
+## the grid's northern edge, which sits at the *lowest* world z: tile row 0 covers
+## the z range from -offset up to -offset plus one tile. Get it wrong and a
+## mirrored disc is streamed.
 func _tile_world_rect(key: Vector2i) -> Rect2:
 	var tile := _tile_rect(key)
 	return Rect2(
 		Vector2(
 			tile.position.x * cell_size.x - _grid_origin_offset().x,
-			_grid_origin_offset().y - (tile.position.y + TILE_SIZE) * cell_size.y),
+			tile.position.y * cell_size.y - _grid_origin_offset().y),
 		Vector2(TILE_SIZE, TILE_SIZE) * cell_size)
 
 

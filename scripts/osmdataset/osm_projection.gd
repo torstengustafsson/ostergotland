@@ -77,12 +77,13 @@ func to_pixel(lon: float, lat: float) -> Vector2:
 		uv.y * float(grid_size.y - 1))
 
 
-## World XZ position of a float pixel position. The row term is negated so that row
-## 0, the grid's northern edge, lands at the highest world z.
+## World XZ position of a float pixel position. The row term is *not* negated,
+## because the DEM's row 0 is its northern edge and the world's +Z is south: row 0
+## therefore lands at the lowest world z.
 func to_world_pixel(pixel: Vector2) -> Vector2:
 	return Vector2(
 		pixel.x * cell_size.x - world_origin_offset().x,
-		world_origin_offset().y - pixel.y * cell_size.y)
+		pixel.y * cell_size.y - world_origin_offset().y)
 
 
 ## World XZ position of a lon/lat position, i.e. lon/lat and pixel in one step.
@@ -102,10 +103,10 @@ func to_lonlat(world: Vector2) -> Vector2:
 	var offset := world_origin_offset()
 	var uv := Vector2(
 		(world.x + offset.x) / cell_size.x,
-		(offset.y - world.y) / cell_size.y) / Vector2(grid_size - Vector2i(1, 1))
+		(world.y + offset.y) / cell_size.y) / Vector2(grid_size - Vector2i(1, 1))
 	return Vector2(
 		bounds.min_lon + uv.x * bounds.lon_span(),
-		bounds.min_lat + uv.y * bounds.lat_span())
+		bounds.max_lat - uv.y * bounds.lat_span())
 
 
 ## World XZ as real metres from the grid's centre, the space the ground shader

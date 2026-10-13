@@ -99,9 +99,14 @@ func cell_size_m(grid_size: Vector2i) -> Vector2:
 
 
 ## Normalized 0..1 coordinates in (lon, lat) axes, ready to use as a mesh UV.
+##
+## v runs **down** the image, i.e. v = 0 is `max_lat`, because row 0 of the DEM is
+## its northern edge: the grid is stored north-up like every raster heightmap.
+## Mapping v from `min_lat` instead reads the whole grid upside down, which moves
+## every feature to the grid's mirror image -- the lakes end up on hillsides.
 func to_uv(lon: float, lat: float) -> Vector2:
 	var u := (lon - min_lon) / lon_span()
-	var v := (lat - min_lat) / lat_span()
+	var v := (max_lat - lat) / lat_span()
 	return Vector2(u, v)
 
 
