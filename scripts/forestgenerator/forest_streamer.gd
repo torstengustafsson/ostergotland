@@ -128,9 +128,9 @@ func _work() -> void:
 	var started := Time.get_ticks_usec()
 	var deadline := int(WORK_BUDGET_MS * 1000.0)
 
-	# Baking is most of the cost, and one tree is 30-60 ms against a 6 ms budget, so
-	# a single bake always spends the whole budget. Which species to bake is decided
-	# by what has been asked for so far, which _plant asks for below.
+	# Baking is most of the cost, and one tree is 30-60 ms against our work budget,
+	# so a single bake often spends the whole budget. Which species to bake is
+	# decided by what has been asked for so far, which _plant asks for below.
 	while generator.bake_next() and Time.get_ticks_usec() - started < deadline:
 		pass
 

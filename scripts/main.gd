@@ -26,16 +26,8 @@ var _spawn_settled := false
 
 
 func _ready() -> void:
-	var start_time = Time.get_ticks_msec()
-
 	map_data.load_dir()
-	var load_time = Time.get_ticks_msec()
-	print("Time to load map data: ", str((load_time - start_time) / 1000.0), " seconds ",
-			map_data.stats())
 
-	# The terrain's own lon/lat box, which heightmap.gd read to work out its
-	# scale, is what the features have to be projected through: a download's
-	# own bounds are a slightly different box and would put them off the ground.
 	projection = OsmProjection.from_terrain(
 		$Heightmap.bounds,
 		$Heightmap.width,
@@ -43,57 +35,28 @@ func _ready() -> void:
 		Vector2($Heightmap.scale.x, $Heightmap.scale.z))
 	osm_index.build(map_data.dataset, projection)
 
-	var index_time = Time.get_ticks_msec()
-	print("Time to index features: ", str((index_time - load_time) / 1000.0), " seconds")
-
-	# The spawn's horizontal position first, because it decides which tiles get
-	# streamed and everything else follows the player there. Only the vertical
-	# half has to wait for a frame; see _snap_player_to_ground().
 	_place_player_at_lonlat(SPAWN_LONLAT)
 
 	$Heightmap.set_stream_target($ProtoController)
 
-	# The ground shader's arrays go in now that the material exists, and the first
-	# set is packed so the ground is not bare on the first frame.
 	osm_ground.bind($Heightmap.material, osm_index)
-	var ground_time := Time.get_ticks_msec()
 	osm_ground.update($ProtoController.position, true)
-	var ground_stats := osm_ground.stats()
-	print("Time to pack ground features: ", str(Time.get_ticks_msec() - ground_time),
-			" ms (", ground_stats["lines"], " lines, ", ground_stats["area_edges"],
-			" area edges, ", ground_stats["lines_dropped"] + ground_stats["area_edges_dropped"],
-			" dropped)")
 
 	add_child(forest_generator)
 	add_child(audio_manager)
-	# Named so it can be reached from the scene tree rather than only through the
-	# script: an unnamed Node3D added in code ends up called "@Node3D@78".
-	forest_generator.name = "ForestGen"
 
-	# The terrain only exists out to LOAD_RADIUS, so the camera has to stop inside
-	# that or the loaded disc's rim comes into view. Deriving it keeps the two
-	# from drifting apart; the 4% is margin for the disc's edge being ragged at
-	# tile granularity.
+	# the 4% is margin for the disc's edge being ragged at tile granularity
 	$ProtoController/Head/Camera3D.far = Heightmap.LOAD_RADIUS * 0.96
-	print("Camera far plane: ", $ProtoController/Head/Camera3D.far, " m")
 
 	forest_streamer.bind(forest_generator, osm_index)
-	var forest_time := Time.get_ticks_msec()
 	forest_streamer.update($ProtoController.position, false)
-	print("Time to plant the first forests: ",
-			str(Time.get_ticks_msec() - forest_time), " ms ", forest_streamer.stats())
 
 	# Add some test sounds and models
 	audio_manager.play_sound(AudioManager.SoundID.BIRD_SONG1, $ProtoController.position, 1.0, 0.0)
 	audio_manager.play_sound_on_object(AudioManager.SoundID.WIND, $ProtoController, 1.0, -35.0, true)
 
-	var generate_time = Time.get_ticks_msec()
-	print("Time to generate objects: ", str((generate_time - index_time) / 1000.0), " seconds")
-
 
 func _process(_delta: float) -> void:
-	# The spawn's height, on the first frame after the tiles under it were
-	# streamed in. See _snap_player_to_ground() for why it cannot be in _ready().
 	if not _spawn_settled:
 		_spawn_settled = true
 		_snap_player_to_ground()

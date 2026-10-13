@@ -43,3 +43,17 @@ func regenerate() -> void:
 	tree_skeleton = TreeGenGenerator.generate_skeleton(self)
 	mesh = TreeGenMesher.build_mesh(tree_skeleton, self)
 	_configured = true
+
+
+## Vertices in the generated mesh, summed over every surface: the bark one plus
+## one per leaf texture. 0 before the first `regenerate()`. Counts what was
+## built, so it follows the forest LOD applied to `bark_rings` and the leaf
+## densities rather than the parameters written here.
+func vertex_count() -> int:
+	if mesh == null:
+		return 0
+	var total := 0
+	for surface_index in range(mesh.get_surface_count()):
+		var vertices: PackedVector3Array = mesh.surface_get_arrays(surface_index)[Mesh.ARRAY_VERTEX]
+		total += vertices.size()
+	return total

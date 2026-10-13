@@ -201,8 +201,11 @@ static func _grow_branch(
 	base_direction = base_direction.normalized()
 
 	var curve_total := branch_set.curve + random.randf_range(-branch_set.curve_variation, branch_set.curve_variation) * 0.5
+	# The sign of `curve` picks the end of the bend; the step is always positive,
+	# since `rotate_toward` rotates *toward* its target and a negative angle
+	# would bend away from it and so undo the target it just chose.
 	var curve_target := Vector3.UP if curve_total >= 0.0 else Vector3.DOWN
-	var curve_step := curve_total / float(maxi(1, branch_set.segments))
+	var curve_step := absf(curve_total) / float(maxi(1, branch_set.segments))
 	var spread_effective := branch_set.spread * (1.0 + random.randf_range(-branch_set.spread_variation, branch_set.spread_variation) * 0.5)
 
 	# Embeds the base a little way into the parent so branch joints show no gap.

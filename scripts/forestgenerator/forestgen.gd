@@ -20,17 +20,46 @@ class_name ForestGen extends Node3D
 ## species something actually needs.
 
 enum ForestType {
-	OakForest,
-	SpruceForest,
+	LeafyForest,
+	ConiferousForest,
 }
 
-## Trees per square metre per species (oak, spruce, maple) for each stand type.
-const DENSITY_OAK_FOREST := [0.001, 0.00002, 0.00005]
-const DENSITY_SPRUCE_FOREST := [0.000001, 0.00002, 0.000001]
+enum TreeSpecies {
+	Oak,
+	Spruce,
+	Maple,
+	Aspen,
+	Birch,
+	Pine,
+	NoSpecies,
+}
 
-## Species; the values are indices into _preset() and the bake queues.
-const SPECIES_OAK := 0
-const SPECIES_SPRUCE := 1
+## Each forest type's trees per square metre per species (oak, spruce, maple) for each stand type.
+const FOREST_TYPE_TREES = {
+	ForestType.LeafyForest: {
+		TreeSpecies.Oak: 0.005,
+		TreeSpecies.Spruce: 0.001,
+		TreeSpecies.Maple: 0.002,
+		TreeSpecies.Aspen: 0.001,
+		TreeSpecies.Birch: 0.002,
+		TreeSpecies.Pine: 0.001,
+	},
+	ForestType.ConiferousForest: {
+		TreeSpecies.Oak: 0.001,
+		TreeSpecies.Spruce: 0.004,
+		TreeSpecies.Maple: 0.0,
+		TreeSpecies.Aspen: 0.0,
+		TreeSpecies.Birch: 0.001,
+		TreeSpecies.Pine: 0.004,
+	}
+}
+
+class ForestSectionPlan:
+	var species: TreeSpecies
+	var count: int
+	func _init(_species: TreeSpecies, _count: int):
+		species = _species
+		count = _count
 
 ## Baked meshes per species. One tree costs tens of milliseconds to generate and
 ## they are all identical apart from their seed, so they are baked once for the
@@ -50,7 +79,7 @@ const VARIANTS := 10
 ## nowhere else, so the knobs live here rather than in the presets to keep the
 ## hero tree available.
 const LOD_MAX_DEPTH := 4
-const LOD_BARK_RINGS := 4
+const LOD_BARK_RINGS := 8
 const LOD_LEAF_DENSITY := 0.12
 const LOD_MIN_LEAVES := 3
 
@@ -113,7 +142,7 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 	rng.seed = seed_value
 	for entry in plan:
 		var transforms: Array = []
-		for _i in entry[1]:
+		for _i in entry.count:
 			var spot := _random_point_in(points, rect, rng)
 			if spot != Vector2.INF:
 				transforms.append(_tree_transform(spot, rng))
@@ -122,14 +151,14 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 		# Spread over the variants, so a cell is not one tree repeated. The split
 		# costs one draw call each, which measured as free (see VARIANTS).
 		var groups: Array = []
-		for _v in _baked(entry[0]).size():
+		for _v in _baked(entry.species).size():
 			groups.append([])
 		for transform in transforms:
 			var group: Array = groups[randi() % groups.size()]
 			group.append(transform)
 		for i in groups.size():
 			if not groups[i].is_empty():
-				added.append(_multimesh(_baked(entry[0])[i], groups[i]))
+				added.append(_multimesh(_baked(entry.species)[i], groups[i]))
 	return added
 
 
@@ -144,8 +173,8 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 func needs_ready(type: ForestType, area: float) -> bool:
 	var ready := true
 	for entry in _plan(type, area):
-		request_baking(entry[0], entry[1])
-		if _baked(entry[0]).size() < _wanted_count[entry[0]]:
+		request_baking(entry)
+		if _baked(entry.species).size() < _wanted_count[entry.species]:
 			ready = false
 	return ready
 
@@ -153,14 +182,13 @@ func needs_ready(type: ForestType, area: float) -> bool:
 ## What a stand of this type covering `area` m2 would grow, as one
 ## [species, tree count] per species that gets at least one tree, in drawing order.
 func _plan(type: ForestType, area: float) -> Array:
-	var densities: Array = DENSITY_OAK_FOREST
-	if type == ForestType.SpruceForest:
-		densities = DENSITY_SPRUCE_FOREST
+	var densities: Dictionary = FOREST_TYPE_TREES[type]
 	var plan: Array = []
-	for i in densities.size():
-		var count := floori(float(densities[i]) * area)
+	for species in densities.keys():
+		var density = densities[species]
+		var count := floori(float(density) * area)
 		if count > 0:
-			plan.append([i, count])
+			plan.append(ForestSectionPlan.new(species, count))
 	return plan
 
 
@@ -170,7 +198,7 @@ func _plan(type: ForestType, area: float) -> Array:
 ## one.
 func bake_next() -> bool:
 	var species := _next_species()
-	if species < 0:
+	if species == TreeSpecies.NoSpecies:
 		return false
 	var tree: TreeGenTree = _preset(species).call(randi())
 	_apply_lod(tree)
@@ -184,14 +212,14 @@ func bake_next() -> bool:
 ## reaches its first mesh before any of them reaches its second. Taking simply the
 ## first species with room left is not round-robin: a cell holding one spruce and
 ## four oaks would then wait for all ten oak variants.
-func _next_species() -> int:
+func _next_species() -> TreeSpecies:
 	var n := _wanted.size()
 	for i in n:
 		var species: int = _wanted[(_cursor + i) % n]
 		if _baked(species).size() < _wanted_count[species]:
 			_cursor = (_cursor + i + 1) % n
-			return species
-	return -1
+			return species as TreeSpecies
+	return TreeSpecies.NoSpecies
 
 
 ## Meshes still to bake, for a progress print.
@@ -204,13 +232,13 @@ func baking() -> int:
 
 ## Asks for up to VARIANTS meshes of `species`, or `trees` if that is fewer --
 ## variety is only worth baking for a species that actually appears more than once.
-func request_baking(species: int, trees: int) -> void:
-	var want := clampi(trees, 1, VARIANTS)
-	if _wanted_count.has(species):
-		_wanted_count[species] = maxi(int(_wanted_count[species]), want)
+func request_baking(plan: ForestSectionPlan) -> void:
+	var want := clampi(plan.count, 1, VARIANTS)
+	if _wanted_count.has(plan.species):
+		_wanted_count[plan.species] = maxi(int(_wanted_count[plan.species]), want)
 		return
-	_wanted_count[species] = want
-	_wanted.append(species)
+	_wanted_count[plan.species] = want
+	_wanted.append(plan.species)
 
 
 ## The forest type an OSM forest feature should grow as, from its leaf_type or
@@ -220,8 +248,8 @@ static func type_for(feature: OsmFeature) -> ForestType:
 	var leaf := (feature as OsmForestArea).species().to_lower()
 	for conifer in CONIFEROUS:
 		if leaf.contains(conifer):
-			return ForestType.SpruceForest
-	return ForestType.OakForest
+			return ForestType.ConiferousForest
+	return ForestType.LeafyForest
 
 
 ## A random point (x, z) inside the polygon and inside `rect`, or Vector2.INF when
@@ -296,16 +324,29 @@ func recycle(nodes: Array) -> void:
 		_pool.append(node)
 
 
-func _baked(species: int) -> Array:
+func _baked(species: TreeSpecies) -> Array:
 	if not _meshes.has(species):
 		_meshes[species] = []
 	return _meshes[species]
 
 
-static func _preset(species: int) -> Callable:
-	if species == SPECIES_SPRUCE:
-		return TreeGenPresets.spruce
+static func _preset(species: TreeSpecies) -> Callable:
+	match species:
+		TreeSpecies.Oak:
+			return TreeGenPresets.oak
+		TreeSpecies.Spruce:
+			return TreeGenPresets.spruce
+		TreeSpecies.Maple:
+			return TreeGenPresets.maple
+		TreeSpecies.Aspen:
+			return TreeGenPresets.aspen
+		TreeSpecies.Birch:
+			return TreeGenPresets.birch
+		TreeSpecies.Pine:
+			return TreeGenPresets.pine
+	print("Warning: Attempted to access unsupported tree (", species, "), using TreeGenPresets.oak as default..")
 	return TreeGenPresets.oak
+
 
 
 ## Cuts a preset down to something worth instancing hundreds of times: the shape is
