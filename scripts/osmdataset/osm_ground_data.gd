@@ -2,9 +2,15 @@ class_name OsmGroundData
 extends RefCounted
 
 ## Packs the OSM ways near the player into the flat uniform arrays
-## ground.gdshader draws from. Roads, railways, water and buildings come out of
-## the dump's own points and widths, so road widths come from the tags and there
-## is no mask to rasterize and keep in step with the terrain.
+## ground.gdshader draws from. Roads, railways and water come out of the dump's
+## own points and widths, so road widths come from the tags and there is no mask
+## to rasterize and keep in step with the terrain.
+##
+## **Buildings are not here.** They were, as filled rings painted flat on the
+## terrain, and they are geometry now -- see BuildingGen, which is where a
+## building's shape and height live. That is the whole reason the area layer is
+## water and nothing else: a filled ring is flat paint, so anything that should
+## stand up cannot use it.
 ##
 ##   var ground := OsmGroundData.new()
 ##   ground.bind($Heightmap.material, osm_index)
@@ -32,11 +38,13 @@ extends RefCounted
 const MAX_LINES := 1408
 const MAX_AREA_EDGES := 512
 
-## Which feature an uploaded entry is; mirrored in ground.gdshader.
+## Which feature an uploaded entry is; mirrored in ground.gdshader. The area
+## kinds are water only, since the buildings that used to be here are geometry
+## (see BuildingGen); the kind stays a per-entry value because the area layer is
+## otherwise generic and the next filled kind should not mean rewriting it.
 const KIND_ROAD := 0
 const KIND_RAIL := 1
 const KIND_WATERWAY := 2
-const AREA_BUILDING := 0
 const AREA_WATER := 1
 
 ## How far around the focus features are gathered, in metres, and how far the
@@ -75,7 +83,7 @@ const RING_TOLERANCE_CEILING := DETAIL_RADIUS
 ## whether a lake 1.5 km away beats a shed 1 km away, and the area layer is the
 ## only one the two compete for.
 const KIND_BONUS_M := { KIND_ROAD: 0.0, KIND_RAIL: 100.0, KIND_WATERWAY: 150.0 }
-const AREA_BONUS_M := { AREA_BUILDING: 0.0, AREA_WATER: 1200.0 }
+const AREA_BONUS_M := { AREA_WATER: 1200.0 }
 const RANK_BONUS_M := 150.0
 
 ## One of the shader's array pairs, the candidates waiting to be chosen for it
@@ -273,7 +281,6 @@ func _rebuild(focus: Vector3) -> void:
 	_stroke(index.query_rect(rect, "roads"), KIND_ROAD, focus_m, reach_m)
 	_stroke(index.query_rect(rect, "railways"), KIND_RAIL, focus_m, reach_m)
 	_stroke(index.query_rect(rect, "water"), KIND_WATERWAY, focus_m, reach_m)
-	_fill(index.query_rect(rect, "buildings"), AREA_BUILDING, focus_m, reach_m)
 	_fill(index.query_rect(rect, "water"), AREA_WATER, focus_m, reach_m)
 
 	# Where they were gathered from, so the shader can skip its loops for
@@ -347,9 +354,7 @@ func _fill(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 			continue
 		# The kind goes in x, because that is where the shader reads it: the area
 		# arrays are (kind, 0, 0, reach), unlike the line arrays' (half_width,
-		# kind, rank, reach). Building it in y, the line convention, left every
-		# area arriving with kind 0.0 == AREA_BUILDING, so lakes and ponds were
-		# filled as if they were buildings and no filled water was found at all.
+		# kind, rank, reach).
 		var attr := Vector4(float(kind), 0.0, 0.0, 0.0)
 		var bonus: float = AREA_BONUS_M[kind]
 		var ring := PackedVector4Array()
@@ -371,8 +376,8 @@ func _fill(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 ## afford, or empty if the ring cannot be in reach.
 ##
 ## The size test comes first because it is the one that decides the cost: a
-## building is four edges and a small pond a dozen, so both are already under the
-## budget, and only a ring big enough to need simplifying pays for either half.
+## pond is a dozen edges and a small lake a few hundred, so only a ring big
+## enough to need simplifying pays for either half.
 static func _fit_ring(points: PackedVector2Array, focus_m: Vector2,
 		reach_m: float) -> PackedVector2Array:
 	if points.size() < 3 or points.size() - 1 <= MAX_RING_EDGES:

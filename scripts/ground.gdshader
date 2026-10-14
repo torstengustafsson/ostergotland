@@ -34,7 +34,6 @@ uniform int area_count = 0;
 const float KIND_ROAD = 0.0;
 const float KIND_RAIL = 1.0;
 const float KIND_WATERWAY = 2.0;
-const float AREA_BUILDING = 0.0;
 const float AREA_WATER = 1.0;
 
 // Water parameters
@@ -44,7 +43,6 @@ uniform vec3 water_color : source_color = vec3(0.0, 0.0, 1.0);
 uniform vec3 ground_color : source_color = vec3(0.25, 0.5, 0.25);
 uniform vec3 hill_color : source_color = vec3(0.35, 0.3, 0.2);
 uniform vec3 road_color : source_color = vec3(0.4, 0.3, 0.2);
-uniform vec3 building_color : source_color = vec3(0.8, 0.1, 0.1);
 uniform vec3 rail_color : source_color = vec3(0.5, 0.5, 0.5);
 
 // Metres per world unit on X and Z, from the projection (see
@@ -139,8 +137,8 @@ vec4 line_masks(vec2 p, float focus_dist) {
 
 // The filled water areas covering `p`, without the antialiasing the fragment
 // stage adds: the value is interpolated across a triangle anyway, so the crossing
-// count on its own is enough here, and skipping the buildings keeps this cheap
-// enough to run per vertex.
+// count on its own is enough here, and skipping the non-water entries keeps this
+// cheap enough to run per vertex.
 float water_area_mask(vec2 p) {
 	float inside = 0.0;
 	for (int i = 0; i < area_count; i++) {
@@ -160,33 +158,33 @@ float water_area_mask(vec2 p) {
 }
 
 
-// How much of each kind of filled area covers `p`, in (buildings, water). Every
-// area edge is one crossing test, so the count is the even-odd inside test, and
-// the distance to the nearest edge antialiases it. The sign of that distance is
-// the crossing test's, which is why no signed distance is needed: a fragment
-// inside an area is on the inner side of its nearest edge. Overlapping rings of
-// the same kind cancel out.
-vec2 area_masks(vec2 p) {
-	vec2 inside = vec2(0.0);
-	vec2 nearest_sq = vec2(1000000000.0);
+// The filled water areas covering `p`: every area edge is one crossing test, so
+// the count is the even-odd inside test, and the distance to the nearest edge
+// antialiases it. The sign of that distance is the crossing test's, which is why
+// no signed distance is needed: a fragment inside an area is on the inner side of
+// its nearest edge. Overlapping rings of the same kind cancel out.
+//
+// The non-water kinds are skipped rather than merely not counted, so the area
+// layer can grow a second kind without this function changing. Buildings were
+// here and are geometry now; see BuildingGen.
+float area_water_mask(vec2 p) {
+	float inside = 0.0;
+	float nearest_sq = 1000000000.0;
 	for (int i = 0; i < area_count; i++) {
+		if (area_attrs[i].x != AREA_WATER) {
+			continue;
+		}
 		vec2 a = area_points[i].xy;
 		vec2 b = area_points[i].zw;
-		float kind = area_attrs[i].x;
 		if ((a.y > p.y) != (b.y > p.y)) {
 			float t = (p.y - a.y) / (b.y - a.y);
 			if (p.x < a.x + t * (b.x - a.x)) {
-				inside.x = kind == AREA_BUILDING ? 1.0 - inside.x : inside.x;
-				inside.y = kind == AREA_WATER ? 1.0 - inside.y : inside.y;
+				inside = 1.0 - inside;
 			}
 		}
-		float distance_sq = segment_distance_sq(p, a, b);
-		nearest_sq.x = kind == AREA_BUILDING ? min(nearest_sq.x, distance_sq) : nearest_sq.x;
-		nearest_sq.y = kind == AREA_WATER ? min(nearest_sq.y, distance_sq) : nearest_sq.y;
+		nearest_sq = min(nearest_sq, segment_distance_sq(p, a, b));
 	}
-	return vec2(
-		smoothstep(-FEATHER, FEATHER, (inside.x * 2.0 - 1.0) * sqrt(nearest_sq.x)),
-		smoothstep(-FEATHER, FEATHER, (inside.y * 2.0 - 1.0) * sqrt(nearest_sq.y)));
+	return smoothstep(-FEATHER, FEATHER, (inside * 2.0 - 1.0) * sqrt(nearest_sq));
 }
 
 
@@ -237,14 +235,14 @@ void fragment() {
 	if (focus_dist <= line_reach + FEATHER) {
 		lines = line_masks(p, focus_dist);
 	}
-	vec2 areas = vec2(0.0);
+	float area_water = 0.0;
 	if (focus_dist <= area_reach + FEATHER) {
-		areas = area_masks(p);
+		area_water = area_water_mask(p);
 	}
 
 	// The vertex stage knows about the filled water; the watercourses it cannot
 	// see between two vertices are added here.
-	float water_here = clamp(max(water_value, max(areas.y, lines.z)), 0.0, 1.0);
+	float water_here = clamp(max(water_value, max(area_water, lines.z)), 0.0, 1.0);
 
 	vec3 albedo;
 	float roughness = 1.0;
@@ -259,7 +257,6 @@ void fragment() {
 		// a motorway, which is the same tag that made it narrower.
 		float rank = clamp(lines.w / max(lines.x, 0.001), 0.0, 1.0);
 		albedo = mix(albedo, road_color * mix(0.85, 1.15, rank), lines.x);
-		albedo = mix(albedo, building_color, areas.x);
 		albedo = mix(albedo, rail_color, lines.y);
 	}
 	ROUGHNESS = roughness;

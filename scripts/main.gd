@@ -21,6 +21,10 @@ var forest_generator: ForestGen = ForestGen.new()
 ## The forests around the player, planted and dropped as they walk. See
 ## ForestStreamer; forest_generator is where its trees go.
 var forest_streamer: ForestStreamer = ForestStreamer.new()
+## The buildings around the player, built from their footprints and dropped as
+## they walk. See BuildingStreamer; building_generator is where they are made.
+var building_generator: BuildingGen = BuildingGen.new()
+var building_streamer: BuildingStreamer = BuildingStreamer.new()
 var audio_manager: AudioManager = AudioManager.new()
 var _spawn_settled := false
 
@@ -43,6 +47,7 @@ func _ready() -> void:
 	osm_ground.update($ProtoController.position, true)
 
 	add_child(forest_generator)
+	add_child(building_generator)
 	add_child(audio_manager)
 
 	# the 4% is margin for the disc's edge being ragged at tile granularity
@@ -50,6 +55,10 @@ func _ready() -> void:
 
 	forest_streamer.bind(forest_generator, osm_index)
 	forest_streamer.update($ProtoController.position, false)
+
+	building_generator.bind($Heightmap)
+	building_streamer.bind(building_generator, osm_index)
+	building_streamer.update($ProtoController.position, false)
 
 	# Add some test sounds and models
 	audio_manager.play_sound(AudioManager.SoundID.BIRD_SONG1, $ProtoController.position, 1.0, 0.0)
@@ -70,6 +79,7 @@ func _process(_delta: float) -> void:
 	# Same deal for the forests, though update() plants what has come into range
 	# and stops at its budget, so it needs calling every frame.
 	forest_streamer.update($ProtoController.position)
+	building_streamer.update($ProtoController.position)
 
 
 ## Everything the index knows about within 500 units of the player: the kind of
