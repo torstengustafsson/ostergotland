@@ -13,7 +13,7 @@ class_name TreeGenGenerator
 const LEAF_TILT_JITTER := deg_to_rad(12.0)   ## max random tilt off the perpendicular plane, radians
 
 static func generate_skeleton(tree: TreeGenTree) -> TreeGenSkeleton.BranchNode:
-	var random := _new_random(tree.seed)
+	var random := _new_random(tree.random_seed)
 
 	var trunk := TreeGenSkeleton.BranchNode.new()
 	trunk.is_trunk = true
@@ -30,9 +30,9 @@ static func generate_skeleton(tree: TreeGenTree) -> TreeGenSkeleton.BranchNode:
 
 static var _auto_seed_rng: RandomNumberGenerator = null
 
-static func _new_random(seed: int) -> RandomNumberGenerator:
+static func _new_random(random_seed: int) -> RandomNumberGenerator:
 	var random := RandomNumberGenerator.new()
-	if seed == 0:
+	if random_seed == 0:
 		# 0 means "auto": draw a unique seed from one shared, time-seeded RNG so
 		# that trees created in the same instant (same tick) still differ, and
 		# re-running the scene produces new trees.
@@ -41,7 +41,7 @@ static func _new_random(seed: int) -> RandomNumberGenerator:
 			_auto_seed_rng.randomize()
 		random.seed = _auto_seed_rng.randi()
 	else:
-		random.seed = seed
+		random.seed = random_seed
 	return random
 
 

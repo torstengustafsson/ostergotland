@@ -10,13 +10,13 @@ static func feature_name() -> String:
 	return "forests"
 
 
-static func accepts(way: OsmWay) -> bool:
-	return way.get_tag("landuse") == "forest" or way.get_tag("natural") == "wood"
+static func accepts(p_way: OsmWay) -> bool:
+	return p_way.get_tag("landuse") == "forest" or p_way.get_tag("natural") == "wood"
 
 
-static func from_way(_dataset: OsmDataset, way: OsmWay) -> OsmFeature:
+static func from_way(_dataset: OsmDataset, p_way: OsmWay) -> OsmFeature:
 	var f := OsmForestArea.new()
-	f.way = way
+	f.way = p_way
 	return f
 
 

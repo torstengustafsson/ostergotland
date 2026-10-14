@@ -153,9 +153,9 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 		var groups: Array = []
 		for _v in _baked(entry.species).size():
 			groups.append([])
-		for transform in transforms:
+		for tree_transform in transforms:
 			var group: Array = groups[randi() % groups.size()]
-			group.append(transform)
+			group.append(tree_transform)
 		for i in groups.size():
 			if not groups[i].is_empty():
 				added.append(_multimesh(_baked(entry.species)[i], groups[i]))
@@ -171,12 +171,12 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 ## and every tree in it is that one mesh, which makes VARIANTS pointless. The wait
 ## costs no real time: the baking happens either way.
 func needs_ready(type: ForestType, area: float) -> bool:
-	var ready := true
+	var all_baked := true
 	for entry in _plan(type, area):
 		request_baking(entry)
 		if _baked(entry.species).size() < _wanted_count[entry.species]:
-			ready = false
-	return ready
+			all_baked = false
+	return all_baked
 
 
 ## What a stand of this type covering `area` m2 would grow, as one
@@ -266,10 +266,10 @@ func _random_point_in(points: PackedVector2Array, rect: Rect2,
 
 
 func _tree_transform(spot: Vector2, rng: RandomNumberGenerator) -> Transform3D:
-	var position := Vector3(spot.x, _ground_height_at(spot.x, spot.y), spot.y)
-	var scale := rng.randf_range(0.9, 1.1)
-	var basis := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * scale)
-	return Transform3D(basis, position)
+	var origin := Vector3(spot.x, _ground_height_at(spot.x, spot.y), spot.y)
+	var size := rng.randf_range(0.9, 1.1)
+	var rot := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * size)
+	return Transform3D(rot, origin)
 
 
 ## Area of a world-XZ polygon, 0 when it has no usable geometry. Godot 4 dropped

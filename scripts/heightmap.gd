@@ -225,19 +225,27 @@ func height_at_world(world: Vector3) -> float:
 		clampi(roundi(pixel.y), 0, height - 1))
 
 
-## Reads the EXR into _heights once. The image itself is not kept.
+## Reads the DEM into _heights once. The image itself is not kept.
+##
+## Loaded as an imported resource, not Image.load_from_file(), which reads the raw
+## file at runtime and so is stripped by an export. This costs exactness: the
+## import must stay lossless (output_hh.exr.import -- hdr_compression and
+## detect_3d/compress_to both off), since a VRAM-compressed float would quantize
+## heights that are in millimetres, and nothing here would look wrong enough to
+## notice.
 func _load_source() -> void:
-	var img := Image.load_from_file(SOURCE_PATH)
-	if img == null:
+	var texture := load(SOURCE_PATH) as Texture2D
+	if texture == null:
 		push_error("Heightmap: could not read %s" % SOURCE_PATH)
 		return
+	var img := texture.get_image()
 	img.convert(Image.FORMAT_RF)
 	width = img.get_width()
 	height = img.get_height()
 	_heights = img.get_data().to_float32_array()
-	_channels = maxi(1, _heights.size() / maxi(1, width * height))
-	_columns = (width + TILE_SIZE - 1) / TILE_SIZE
-	_rows = (height + TILE_SIZE - 1) / TILE_SIZE
+	_channels = maxi(1, floori(float(_heights.size()) / float(maxi(1, width * height))))
+	_columns = int(ceil(float(width) / float(TILE_SIZE)))
+	_rows = int(ceil(float(height) / float(TILE_SIZE)))
 	img = null
 
 
@@ -295,7 +303,7 @@ func _build_tile(key: Vector2i, stride: int = 1) -> void:
 		(y0 + (tile_rows - 1) * 0.5) - (height - 1) * 0.5)
 
 	var mesh_instance := MeshInstance3D.new()
-	mesh_instance.mesh = _build_mesh(x0, y0, cols, tile_rows, center, stride)
+	mesh_instance.mesh = _build_mesh(x0, y0, cols, tile_rows, stride)
 	mesh_instance.material_override = material
 	mesh_instance.position = center
 	add_child(mesh_instance)
@@ -317,8 +325,7 @@ func _free_tile(key: Vector2i) -> void:
 
 ## The tile's own pixels as vertices centred on the tile, sampled from the source
 ## grid outside the tile where needed so a tile edge matches its neighbour's.
-func _build_mesh(x0: int, y0: int, cols: int, tile_rows: int, center: Vector3,
-		stride: int = 1) -> ArrayMesh:
+func _build_mesh(x0: int, y0: int, cols: int, tile_rows: int, stride: int = 1) -> ArrayMesh:
 	# `stride` samples every stride'th source pixel but still spans the full
 	# cols x tile_rows, so the tile keeps reaching one cell past its neighbour's
 	# first column. TILE_SIZE 64 divides by 2 and 4, so coarse tiles line up.

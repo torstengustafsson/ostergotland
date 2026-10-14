@@ -4,7 +4,7 @@ class_name TreeGenTree extends MeshInstance3D
 ## set recursively connects to child branch sets and leaf sets. The tree uses a
 ## bark `Texture2D` for the trunk and branches; leaf sets bring their own.
 
-var seed := 0             ## 0 = a different random tree every generation
+var random_seed := 0   ## 0 = a different random tree every generation
 var max_depth := 8        ## recursion depth guard for the branch set chain
 
 ## -- Trunk -------------------------------------------------------------------

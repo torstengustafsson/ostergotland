@@ -30,9 +30,9 @@ static func accepts(_way: OsmWay) -> bool:
 
 
 ## Builds a feature instance wrapping `way`. Override to attach extra state.
-static func from_way(_dataset: OsmDataset, way: OsmWay) -> OsmFeature:
+static func from_way(_dataset: OsmDataset, p_way: OsmWay) -> OsmFeature:
 	var f := OsmFeature.new()
-	f.way = way
+	f.way = p_way
 	return f
 
 

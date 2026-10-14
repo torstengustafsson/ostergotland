@@ -16,15 +16,15 @@ static func feature_name() -> String:
 	return "water"
 
 
-static func accepts(way: OsmWay) -> bool:
-	return way.get_tag("natural") == "water" \
-		or way.has_tag("water") \
-		or way.has_tag("waterway")
+static func accepts(p_way: OsmWay) -> bool:
+	return p_way.get_tag("natural") == "water" \
+		or p_way.has_tag("water") \
+		or p_way.has_tag("waterway")
 
 
-static func from_way(_dataset: OsmDataset, way: OsmWay) -> OsmFeature:
+static func from_way(_dataset: OsmDataset, p_way: OsmWay) -> OsmFeature:
 	var w := OsmWaterArea.new()
-	w.way = way
+	w.way = p_way
 	return w
 
 

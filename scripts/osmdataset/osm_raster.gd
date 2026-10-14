@@ -60,7 +60,7 @@ static func _draw_line(img: Image, a: Vector2i, b: Vector2i, color: Color, width
 	var sy := 1 if y0 < y1 else -1
 	var err: int = dx + dy
 
-	var half := maxi((width - 1) / 2, 0)
+	var half := maxi(floori(float(width - 1) / 2.0), 0)
 	while true:
 		_plot(img, x0, y0, color, half)
 		if x0 == x1 and y0 == y1:

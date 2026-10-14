@@ -133,25 +133,25 @@ class Layer extends RefCounted:
 		reach = 0.0
 
 	## One stroked segment, which is the whole candidate for a line layer.
-	## `reach` is how far the focus is from the segment's farther end.
+	## `p_reach` is how far the focus is from the segment's farther end.
 	func add_segment(a: Vector2, b: Vector2, attr: Vector4, score: float,
-			reach: float) -> void:
+			p_reach: float) -> void:
 		starts.append(points.size())
 		sizes.append(1)
 		scores.append(score)
-		reaches.append(reach)
+		reaches.append(p_reach)
 		points.append(Vector4(a.x, a.y, b.x, b.y))
 		attrs.append(attr)
 
 	## A whole filled ring, one vec4 per side.
 	func add_ring(ring: PackedVector4Array, attr: Vector4, score: float,
-			reach: float) -> void:
+			p_reach: float) -> void:
 		if ring.is_empty():
 			return
 		starts.append(points.size())
 		sizes.append(ring.size())
 		scores.append(score)
-		reaches.append(reach)
+		reaches.append(p_reach)
 		for edge in ring:
 			points.append(edge)
 			attrs.append(attr)

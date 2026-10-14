@@ -43,13 +43,13 @@ static func feature_name() -> String:
 	return "roads"
 
 
-static func accepts(way: OsmWay) -> bool:
-	return way.has_tag("highway")
+static func accepts(p_way: OsmWay) -> bool:
+	return p_way.has_tag("highway")
 
 
-static func from_way(_dataset: OsmDataset, way: OsmWay) -> OsmFeature:
+static func from_way(_dataset: OsmDataset, p_way: OsmWay) -> OsmFeature:
 	var r := OsmRoad.new()
-	r.way = way
+	r.way = p_way
 	return r
 
 

@@ -32,7 +32,7 @@ static func _base_tree(trunk_height: float, trunk_radius: float, bark_texture: T
 ## tree; the default 0 generates a new, unique tree on every call.
 static func oak(random_seed: int = 0) -> TreeGenTree:
 	var tree := _base_tree(28.0, 0.55, BARK_TEXTURE_OAK)
-	tree.seed = random_seed
+	tree.random_seed = random_seed
 	tree.trunk_segments = 4
 	tree.trunk_tip_taper = 0.5
 	tree.branch_sets = [
@@ -135,7 +135,7 @@ static func _oak_leaves() -> TreeGenLeafSet:
 
 static func spruce(random_seed: int = 0) -> TreeGenTree:
 	var tree := _base_tree(18.0, 0.5, BARK_TEXTURE_SPRUCE)
-	tree.seed = random_seed
+	tree.random_seed = random_seed
 	tree.trunk_segments = 9
 	tree.trunk_tip_taper = 0.25
 	tree.branch_sets = [
@@ -221,7 +221,7 @@ static func _spruce_needles(leaf_count, leaf_size) -> TreeGenLeafSet:
 
 static func maple(random_seed: int = 0) -> TreeGenTree:
 	var tree := _base_tree(26.0, 0.5, BARK_TEXTURE_MAPLE)
-	tree.seed = random_seed
+	tree.random_seed = random_seed
 	tree.trunk_segments = 5
 	tree.trunk_tip_taper = 0.55
 	tree.branch_sets = [_maple_scaffold_set()]
@@ -300,7 +300,7 @@ static func _maple_leaves() -> TreeGenLeafSet:
 
 static func aspen(random_seed: int = 0) -> TreeGenTree:
 	var tree := _base_tree(24.0, 0.4, BARK_TEXTURE_ASPEN)
-	tree.seed = random_seed
+	tree.random_seed = random_seed
 	tree.trunk_segments = 6
 	tree.trunk_tip_taper = 0.4
 	tree.branch_sets = [_aspen_scaffold_set()]
@@ -378,7 +378,7 @@ static func _aspen_leaves() -> TreeGenLeafSet:
 
 static func birch(random_seed: int = 0) -> TreeGenTree:
 	var tree := _base_tree(25.0, 0.6, BARK_TEXTURE_BIRCH)
-	tree.seed = random_seed
+	tree.random_seed = random_seed
 	tree.trunk_segments = 6
 	tree.trunk_tip_taper = 0.4
 	tree.branch_sets = [_birch_scaffold_set()]
@@ -456,7 +456,7 @@ static func _birch_leaves() -> TreeGenLeafSet:
 
 static func pine(random_seed: int = 0) -> TreeGenTree:
 	var tree := _base_tree(30.0, 0.7, BARK_TEXTURE_PINE)
-	tree.seed = random_seed
+	tree.random_seed = random_seed
 	tree.trunk_segments = 6
 	tree.trunk_tip_taper = 0.4
 	tree.branch_sets = [_pine_scaffold_set()]
@@ -534,7 +534,7 @@ static func _pine_leaves() -> TreeGenLeafSet:
 
 static func elm(random_seed: int = 0) -> TreeGenTree:
 	var tree := _base_tree(9.0, 0.5, BARK_TEXTURE_MAPLE) # TODO
-	tree.seed = random_seed
+	tree.random_seed = random_seed
 	tree.trunk_segments = 5
 	tree.trunk_tip_taper = 0.5
 	tree.branch_sets = [_elm_scaffold_set()]
@@ -613,7 +613,7 @@ static func _elm_leaves() -> TreeGenLeafSet:
 
 static func palm(random_seed: int = 0) -> TreeGenTree:
 	var tree := _base_tree(8.0, 0.3, BARK_TEXTURE_MAPLE) # TODO
-	tree.seed = random_seed
+	tree.random_seed = random_seed
 	tree.trunk_segments = 6
 	tree.trunk_tip_taper = 0.7
 	tree.branch_sets = [_palm_crown_set()]

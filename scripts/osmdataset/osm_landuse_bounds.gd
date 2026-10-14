@@ -31,18 +31,18 @@ var world_points: PackedVector2Array = PackedVector2Array()
 ## Wraps `feature` and computes its bounds. `terrain_bounds` is the lon/lat
 ## extent of the terrain grid described by `grid_width`, `grid_height` and
 ## `grid_cell_size`.
-static func from_feature(dataset: OsmDataset, feature: OsmFeature, terrain_bounds: OsmBounds,
+static func from_feature(dataset: OsmDataset, p_feature: OsmFeature, terrain_bounds: OsmBounds,
 		grid_width: int, grid_height: int, grid_cell_size: Vector2) -> OsmLanduseBounds:
 	var area := OsmLanduseBounds.new()
 	var projection := OsmProjection.from_terrain(
 		terrain_bounds, grid_width, grid_height, grid_cell_size)
-	area.feature = feature
-	area.area_name = feature.name()
-	area.kind = _kind_of(feature)
-	area.osm_bounds = feature.osm_bounds(dataset)
-	area.pixel_rect = feature.pixel_rect(dataset, terrain_bounds, grid_width, grid_height)
+	area.feature = p_feature
+	area.area_name = p_feature.name()
+	area.kind = _kind_of(p_feature)
+	area.osm_bounds = p_feature.osm_bounds(dataset)
+	area.pixel_rect = p_feature.pixel_rect(dataset, terrain_bounds, grid_width, grid_height)
 	area.world_rect = projection.pixel_rect_to_world(area.pixel_rect)
-	area.world_points = projection.way_points(dataset, feature.way)
+	area.world_points = projection.way_points(dataset, p_feature.way)
 	return area
 
 
@@ -52,9 +52,9 @@ func is_empty() -> bool:
 
 
 ## The landuse/natural value the area is tagged with, e.g. "forest", "wood".
-static func _kind_of(feature: OsmFeature) -> String:
+static func _kind_of(p_feature: OsmFeature) -> String:
 	for key in ["landuse", "natural"]:
-		var value := feature.get_tag(key)
+		var value := p_feature.get_tag(key)
 		if not value.is_empty():
 			return value
 	return ""
