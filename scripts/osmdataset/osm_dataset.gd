@@ -8,7 +8,7 @@ extends RefCounted
 ##   relations: Array           raw relation dicts
 ##   features:  Dictionary      feature group name -> Array of OsmFeature
 ##                              (e.g. "roads", "railways", "buildings",
-##                              "water", "forests")
+##                              "water", "forests", "cover")
 ## Node ids are strings.
 ##
 ## One dataset holds any number of source files: append_file() adds one with all
@@ -24,7 +24,8 @@ var bounds: OsmBounds = null
 var ways: Array[OsmWay] = []
 var relations: Array = []
 var features: Dictionary = {}
-var feature_classes: Array = [OsmRoad, OsmRailway, OsmBuilding, OsmWaterArea, OsmForestArea]
+var feature_classes: Array = [OsmRoad, OsmRailway, OsmBuilding, OsmWaterArea,
+	OsmForestArea, OsmGroundCover]
 var _nodes: Dictionary = {}
 ## Way id -> OsmWay, so a relation's members can be resolved without a scan.
 ## Built by extract_features(), which is the only thing that reads relations.

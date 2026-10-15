@@ -108,7 +108,7 @@ func _ready() -> void:
 	print("Terrain: ", width, "x", height, " px = ", _columns, "x", _rows, " tiles of ",
 			TILE_SIZE, " px, streamed within ", LOAD_RADIUS, " m")
 	_build_material()
-	_fill_water_noise()
+	_fill_ground_noise()
 
 
 func _apply_scale() -> void:
@@ -275,12 +275,13 @@ func _build_material() -> void:
 
 
 ## Started rather than awaited, so the first tiles can be built before the noise
-## exists.
-func _fill_water_noise() -> void:
-	var water_noise_texture := NoiseTexture3D.new()
-	water_noise_texture.noise = FastNoiseLite.new()
-	await water_noise_texture.changed
-	material.set_shader_parameter("water_noise", water_noise_texture)
+## exists. This one is only the water's: the forest floor's patches have their own
+## volumes, built and uploaded by OsmGroundData.
+func _fill_ground_noise() -> void:
+	var ground_noise_texture := NoiseTexture3D.new()
+	ground_noise_texture.noise = FastNoiseLite.new()
+	await ground_noise_texture.changed
+	material.set_shader_parameter("ground_noise", ground_noise_texture)
 
 
 ## Builds a tile's mesh and collision shape and adds both to the scene.

@@ -4,13 +4,15 @@ extends RefCounted
 ## Packs the OSM ways near the player into the flat uniform arrays
 ## ground.gdshader draws from. Roads, railways and water come out of the dump's
 ## own points and widths, so road widths come from the tags and there is no mask
-## to rasterize and keep in step with the terrain.
+## to rasterize and keep in step with the terrain. Land cover (farmland, meadow,
+## grass, beach) comes out the same way and is drawn as a texture instead of a
+## colour; see COVER.
 ##
 ## **Buildings are not here.** They were, as filled rings painted flat on the
 ## terrain, and they are geometry now -- see BuildingGen, which is where a
-## building's shape and height live. That is the whole reason the area layer is
-## water and nothing else: a filled ring is flat paint, so anything that should
-## stand up cannot use it.
+## building's shape and height live. That is why the area layer's only non-textured
+## kind is water: a filled ring is flat paint, so anything that should stand up
+## cannot use it.
 ##
 ##   var ground := OsmGroundData.new()
 ##   ground.bind($Heightmap.material, osm_index)
@@ -32,20 +34,62 @@ extends RefCounted
 ## the old number's worth of features.
 ##
 ## Each entry costs 32 bytes against the device's
-## LIMIT_MAX_UNIFORM_BUFFER_SIZE, so the caps are bounded by the GPU and not by
-## taste. upload() keeps the *nearest* N, so the visible horizon is how far the
-## marginal entry reaches, not the cap itself.
+## LIMIT_MAX_UNIFORM_BUFFER_SIZE -- 65536 on the desktop driver this runs on -- so
+## the caps are bounded by the GPU and not by taste, and **the two together have to
+## stay under 2048 entries.** They are at 1984, so there is no room for a third
+## array: the next entry in either one does not fit.
+##
+## upload() keeps the *nearest* N, so the visible horizon is how far the marginal
+## entry reaches, not the cap itself. Neither layer is slack: the line layer fills
+## up in open country and drops the far half of the road network, and the area
+## layer runs out about 800 m out once the ground cover is in it. Raising one cap
+## therefore costs the other, and neither can be raised alone.
 const MAX_LINES := 1408
-const MAX_AREA_EDGES := 512
+const MAX_AREA_EDGES := 576
 
-## Which feature an uploaded entry is; mirrored in ground.gdshader. The area
-## kinds are water only, since the buildings that used to be here are geometry
-## (see BuildingGen); the kind stays a per-entry value because the area layer is
-## otherwise generic and the next filled kind should not mean rewriting it.
+## Which feature an uploaded entry is; mirrored in ground.gdshader. The area kinds
+## past the first are the ground cover OsmGroundCover names.
+##
+## **The area kinds are consecutive and their order is the shader's channel
+## order** (farmland, meadow, grass, beach), because area_masks() keeps one parity
+## and one nearest-edge distance per kind in the components of a vec4 and picks
+## its channel by counting down from AREA_FARMLAND. AREA_FOREST is the odd one
+## out and is deliberately outside that run: it is the one kind with no texture of
+## its own, so it gets a separate out value rather than a fifth channel, and it
+## sits above the four rather than inside the vec4 to keep that count honest.
+##
+## Water is the only kind that is not a texture, because the buildings that used to
+## share this layer with it are geometry now (see BuildingGen); the kind stays a
+## per-entry value because the area layer is otherwise generic and the next filled
+## kind should not mean rewriting it.
 const KIND_ROAD := 0
 const KIND_RAIL := 1
 const KIND_WATERWAY := 2
 const AREA_WATER := 1
+const AREA_FARMLAND := 2
+const AREA_MEADOW := 3
+const AREA_GRASS := 4
+const AREA_BEACH := 5
+const AREA_FOREST := 6
+
+## The ground cover the shader has a texture for, keyed by OsmGroundCover's own
+## cover_kind(): the area kind the polygon is drawn as, the uniform its texture is
+## uploaded as, and the texture. Which scan goes with which tag is judgement and
+## not something the tags say: farmland is tilled soil, meadow is moss over leaf
+## litter, grass is a mown lawn, and a beach is sand.
+##
+## **A cover kind missing here is dropped**, not drawn as whatever kind shares its
+## number, which is why this is a table and not a `landuse` value passed through.
+const COVER := {
+	"farmland": [AREA_FARMLAND, "soil_texture",
+		"res://assets/textures/ground/Ground048_1K-JPG_Color.jpg"],
+	"meadow": [AREA_MEADOW, "meadow_texture",
+		"res://assets/textures/ground/Ground037_1K-JPG_Color.jpg"],
+	"grass": [AREA_GRASS, "grass_texture",
+		"res://assets/textures/ground/Grass001_1K-JPG_Color.jpg"],
+	"beach": [AREA_BEACH, "beach_texture",
+		"res://assets/textures/ground/Ground080_1K-JPG_Color.jpg"],
+}
 
 ## How far around the focus features are gathered, in metres, and how far the
 ## focus has to move before the arrays are rebuilt. The two together are what
@@ -67,6 +111,15 @@ const MAX_SEGMENT_UNITS := DETAIL_RADIUS * 2.0 * 1.4142136
 ## can hold that.
 const MAX_RING_EDGES := 160
 const RING_SIMPLIFY_M := 3.0
+##
+## How many edges a ring of one kind is allowed before simplification has to cut
+## it further, which defaults to MAX_RING_EDGES.
+##
+## **A wood is not a lake and cannot afford the same budget.** It is drawn as a
+## floor that fades over forest_fade_m and sits under a canopy that hides its
+## edge anyway, so the outline's detail is spent where nobody can see it, and the
+## area layer it competes for is the same one the fields use.
+const RING_EDGE_BUDGET := {AREA_FOREST: 40}
 ## How far a boundary may be moved by simplification before the result stops
 ## being a shape. Also bounds the tolerance search, and it is what makes the
 ## reach pre-test in _fit_ring exact: simplification only ever pulls a boundary
@@ -81,10 +134,80 @@ const RING_TOLERANCE_CEILING := DETAIL_RADIUS
 ##
 ## The water bonus is in metres rather than a nudge because that is what decides
 ## whether a lake 1.5 km away beats a shed 1 km away, and the area layer is the
-## only one the two compete for.
+## only one the two compete for. It also keeps cover off the water's back: a farm
+## field is a whole ring of edges and there are hundreds of them, so without the
+## bonus a village full of fields would push its own lake out of the array.
 const KIND_BONUS_M := { KIND_ROAD: 0.0, KIND_RAIL: 100.0, KIND_WATERWAY: 150.0 }
-const AREA_BONUS_M := { AREA_WATER: 1200.0 }
 const RANK_BONUS_M := 150.0
+const AREA_BONUS_M := {
+	AREA_WATER: 1200.0,
+	AREA_FARMLAND: 0.0, AREA_MEADOW: 0.0, AREA_GRASS: 0.0, AREA_BEACH: 0.0,
+	# A wood is planted whether or not its ground draws, so ground that stops
+	# under one reads as bare grass with a forest hovering over it. This is how
+	# much further away a wood may be than a field and still win the cap; at the
+	# spawn, in edges of 576, none gives forest 141 and farmland 165, 400 gives
+	# forest 343 and farmland nothing at all, and this sits between at forest 193
+	# and farmland 141. It is the first thing to raise if fields start going
+	# missing, and the first to lower if woods come back bare.
+	AREA_FOREST: 120.0,
+}
+
+## The forest floor's patches: which sampler the noise is uploaded as, the
+## frequency it is built at, and how far its seed sits from FOREST_NOISE_SEED.
+## Mirrored by the forest_soil_noise / forest_grass_noise uniforms in
+## ground.gdshader, and keyed by patch name only for readability.
+##
+## **It is not the wave noise.** The two want opposite things out of one volume --
+## waves need detail at the scale of a ripple, a forest floor needs a handful of
+## blobs across a wood -- and sharing one left the patch value living inside a
+## fraction of the noise's range, so the three-way blend had nowhere to put its
+## ramp edges and what came out was a speckle of full-weight pixels rather than
+## patches. Normalising and tiling its own is what makes the blend placeable.
+##
+## **One volume per patch, not one volume read at two offsets.** Decoupling the
+## samples was only half the problem: an offset moves where a patch sits without
+## changing how big it is, and patch size is the half of a noise that is its own
+## frequency. Bare earth shows in small scattered spots where the litter thins,
+## grass in broad sweeps, so the two frequencies are an octave and a half apart and
+## the seeds are apart too -- a different frequency alone would still leave the two
+## correlated at the scale of the blobs, since they share a lattice.
+##
+## Generation is left to run: the parameter is set immediately and the volume fills
+## in over the next frame, which is what a shader wanting a sampler before the first
+## draw gets.
+const FOREST_PATCHES := {
+	"soil": ["forest_soil_noise", 0.55, 1],
+	"grass": ["forest_grass_noise", 0.20, 2],
+}
+
+const FOREST_NOISE_SEED := 20240517
+
+
+## One patch's noise volume, seamless and Simplex smoothed, built at `p_frequency`
+## and seeded `p_seed_offset` away from the base seed. The octaves are what keep
+## the edges of a patch soft rather than lobed, and the smoothing is why the
+## resulting volume is narrow: measured over the whole 64-cube it lands in about
+## 0.10..0.89 with half of it inside 0.40..0.60, which is the distribution the
+## forest_soil_edge / forest_grass_edge ramp pairs are placed on.
+##
+## **Seamless because the uv is world position**: without it every repeat would end
+## in a hard seam, which is exactly the kind of edge this is here to avoid.
+func _make_forest_noise(p_frequency: float, p_seed_offset: int) -> NoiseTexture3D:
+	var noise := FastNoiseLite.new()
+	noise.seed = FOREST_NOISE_SEED + p_seed_offset
+	noise.noise_type = FastNoiseLite.TYPE_SIMPLEX_SMOOTH
+	# Low enough that the volume is not all detail: at the shader's
+	# forest_patch_m a higher frequency turns the floor into per-pixel speckle
+	# from any height, because the blend masks alias with it.
+	noise.frequency = p_frequency
+	noise.fractal_octaves = 3
+	var texture := NoiseTexture3D.new()
+	texture.noise = noise
+	texture.width = 64
+	texture.height = 64
+	texture.depth = 64
+	texture.seamless = true
+	return texture
 
 ## One of the shader's array pairs, the candidates waiting to be chosen for it
 ## and the cap it uploads. `points` holds one (ax, az, bx, bz) edge in metres per
@@ -235,6 +358,18 @@ func bind(p_material: ShaderMaterial, p_index: OsmQuadtree) -> void:
 	material.set_shader_parameter("focus_metres", Vector2.ZERO)
 	material.set_shader_parameter("line_reach", 0.0)
 	material.set_shader_parameter("area_reach", 0.0)
+	# Loaded rather than preloaded so a missing ground scan is one unset sampler
+	# and an error here, not a script that will not load at all.
+	for entry in COVER.values():
+		var row: Array = entry
+		var texture := load(row[2]) as Texture2D
+		if texture == null:
+			push_error("OsmGroundData: no ground texture at %s" % row[2])
+			continue
+		material.set_shader_parameter(row[1], texture)
+	for patch: Array in FOREST_PATCHES.values():
+		material.set_shader_parameter(patch[0],
+				_make_forest_noise(patch[1], patch[2]))
 	lines.upload(material)
 	areas.upload(material)
 
@@ -282,6 +417,14 @@ func _rebuild(focus: Vector3) -> void:
 	_stroke(index.query_rect(rect, "railways"), KIND_RAIL, focus_m, reach_m)
 	_stroke(index.query_rect(rect, "water"), KIND_WATERWAY, focus_m, reach_m)
 	_fill(index.query_rect(rect, "water"), AREA_WATER, focus_m, reach_m)
+	# -1 rather than a kind, because every feature in this query has to name its
+	# own: the cover group holds a different kind per polygon, and there is no
+	# single answer to pass.
+	_fill(index.query_rect(rect, "cover"), -1, focus_m, reach_m)
+	# Forest is a whole kind of its own, and the same rings ForestGen plants on:
+	# the trees are placed from OsmForestArea whether or not the ground draws, so
+	# the floor and the canopy want the same boundary.
+	_fill(index.query_rect(rect, "forests"), AREA_FOREST, focus_m, reach_m)
 
 	# Where they were gathered from, so the shader can skip its loops for
 	# everything past them.
@@ -324,9 +467,10 @@ func _stroke(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 					maxf(focus_m.distance_to(a), focus_m.distance_to(b)))
 
 
-## Adds a whole ring per filled area in `features`. The index's points repeat the
-## closing vertex of a closed way, so a ring is size - 1 edges and the shader's
-## crossing test closes it by itself.
+## Adds a whole ring per filled area in `features`. `p_default_kind` is the kind
+## for a feature that does not name one, and -1 admits only features that do. The
+## index's points repeat the closing vertex of a closed way, so a ring is size - 1
+## edges and the shader's crossing test closes it by itself.
 ##
 ## The ring goes in whole or not at all, and only if part of it is within reach.
 ## The crossing test counts how many ring sides a ray crosses, so one missing side
@@ -344,12 +488,16 @@ func _stroke(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 ## DETAIL_RADIUS -- and that is exactly why Roxen (12.6 km) and Glan (9.6 km) were
 ## never drawn at any position on the map. The reach that *is* uploaded is still
 ## the farthest one, so the shader's gate stays exact for every fragment it draws.
-func _fill(features: Array[OsmFeature], kind: int, focus_m: Vector2,
+func _fill(features: Array[OsmFeature], p_default_kind: int, focus_m: Vector2,
 		reach_m: float) -> void:
 	for feature in features:
 		if not feature.is_area():
 			continue
-		var points := _fit_ring(_in_metres(index.entry_points(feature)), focus_m, reach_m)
+		var kind := _area_kind(feature, p_default_kind)
+		if kind < 0:
+			continue
+		var points := _fit_ring(_in_metres(index.entry_points(feature)), focus_m, reach_m,
+				RING_EDGE_BUDGET.get(kind, MAX_RING_EDGES))
 		if points.size() < 3:
 			continue
 		# The kind goes in x, because that is where the shader reads it: the area
@@ -372,15 +520,30 @@ func _fill(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 		areas.add_ring(ring, attr, nearest - bonus, farthest)
 
 
+## The shader area kind `feature` is drawn as, or -1 for none.
+##
+## Ground cover names its own through COVER, because a group of cover is a mix of
+## kinds rather than one; everything else takes `p_default_kind`. A cover polygon
+## whose tag is not in COVER comes back -1 and is dropped here rather than drawn
+## as whatever kind shares its number.
+static func _area_kind(feature: OsmFeature, p_default_kind: int) -> int:
+	if feature is OsmGroundCover:
+		var row: Array = COVER.get((feature as OsmGroundCover).cover_kind(), [])
+		return -1 if row.is_empty() else int(row[0])
+	return p_default_kind
+
+
 ## A ring's points ready for the edge loop: cut down to what the area array can
 ## afford, or empty if the ring cannot be in reach.
 ##
 ## The size test comes first because it is the one that decides the cost: a
 ## pond is a dozen edges and a small lake a few hundred, so only a ring big
 ## enough to need simplifying pays for either half.
-static func _fit_ring(points: PackedVector2Array, focus_m: Vector2,
-		reach_m: float) -> PackedVector2Array:
-	if points.size() < 3 or points.size() - 1 <= MAX_RING_EDGES:
+## `p_max_edges` is the ring's own budget for this kind (RING_EDGE_BUDGET), which
+## is MAX_RING_EDGES unless the kind overrides it.
+static func _fit_ring(points: PackedVector2Array, focus_m: Vector2, reach_m: float,
+		p_max_edges: int) -> PackedVector2Array:
+	if points.size() < 3 or points.size() - 1 <= p_max_edges:
 		return points
 	# The reach test comes before the simplification because that is the expensive
 	# half and _fill's own reach gate would throw the result away anyway.
@@ -389,7 +552,7 @@ static func _fit_ring(points: PackedVector2Array, focus_m: Vector2,
 		nearest_vertex = minf(nearest_vertex, focus_m.distance_to(points[i]))
 	if nearest_vertex > reach_m + RING_TOLERANCE_CEILING:
 		return PackedVector2Array()
-	return _simplify_ring(points)
+	return _simplify_ring(points, p_max_edges)
 
 
 ## A filled ring with its vertex count cut down to what the area array can afford,
@@ -406,12 +569,13 @@ static func _fit_ring(points: PackedVector2Array, focus_m: Vector2,
 ##
 ## **The tolerance is a starting point, not the rule.** At RING_SIMPLIFY_M a
 ## 2594-edge shoreline still comes out around 650 edges, which no area cap can
-## hold, so it doubles until the ring is under MAX_RING_EDGES or the tolerance is
+## hold, so it doubles until the ring is under its budget or the tolerance is
 ## plainly beyond saving. RING_TOLERANCE_CEILING stops it, and upload() will drop
 ## the ring rather than truncate it, like every other area edge.
-static func _simplify_ring(points: PackedVector2Array) -> PackedVector2Array:
+static func _simplify_ring(points: PackedVector2Array,
+		p_max_edges: int) -> PackedVector2Array:
 	var n := points.size()
-	if n < 5 or n - 1 <= MAX_RING_EDGES:
+	if n < 5 or n - 1 <= p_max_edges:
 		return points
 	# A closed way repeats its first node last; drop the duplicate while the two
 	# arcs are simplified separately and put it back at the end.
@@ -431,7 +595,7 @@ static func _simplify_ring(points: PackedVector2Array) -> PackedVector2Array:
 
 	var tolerance := RING_SIMPLIFY_M
 	var out := _simplified_at(body, split, tolerance)
-	while out.size() - 1 > MAX_RING_EDGES and tolerance < RING_TOLERANCE_CEILING:
+	while out.size() - 1 > p_max_edges and tolerance < RING_TOLERANCE_CEILING:
 		tolerance = minf(tolerance * 2.0, RING_TOLERANCE_CEILING)
 		out = _simplified_at(body, split, tolerance)
 	out.append(out[0])

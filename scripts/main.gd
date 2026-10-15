@@ -32,7 +32,6 @@ var debug_overlay: DebugOverlay = DebugOverlay.new()
 
 var _spawn_settled := false
 
-
 func _ready() -> void:
 	map_data.load_dir()
 
