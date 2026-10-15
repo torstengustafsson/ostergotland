@@ -24,6 +24,15 @@ static func feature_name() -> String:
 	return "feature"
 
 
+## The same name reached through an instance, which is how a caller holding a
+## feature rather than a class asks for it. GDScript resolves a static called
+## through an instance to that instance's class but one called through the base
+## type to the base class, so OsmFeature.feature_name() answers "feature" for
+## every feature and only this answers what the caller means.
+func group_name() -> String:
+	return feature_name()
+
+
 ## Whether `way` belongs to this feature group.
 static func accepts(_way: OsmWay) -> bool:
 	return false

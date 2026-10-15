@@ -16,10 +16,6 @@ sky = SubResource("Sky_d0jkc")
 [node name="Main" type="Node3D" unique_id=2143192203]
 script = ExtResource("1_h2yge")
 
-[node name="HUD" type="Label" parent="." unique_id=174690582]
-offset_right = 40.0
-offset_bottom = 23.0
-
 [node name="Heightmap" type="StaticBody3D" parent="." unique_id=2130648582]
 script = ExtResource("1_ig7tw")
 
