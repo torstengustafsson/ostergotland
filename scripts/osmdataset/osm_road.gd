@@ -38,6 +38,64 @@ const DRIVABLE := [
 	"unclassified", "residential", "living_street", "service",
 ]
 
+## Which of the ground shader's road scans this way is drawn with, keyed by
+## OsmGroundData.ROAD_LOOKS. The tags do not say "which scan", only how big the
+## road is and how loose its surface is, so the split is made here and the scans
+## are bound to the answers there.
+##
+## **`surface` beats the class, because where both are present the surface is
+## the one that was surveyed.** It is also the only signal that separates a gravel
+## service road from a tarmac one, since both are `highway=service` and the width
+## table cannot tell them apart.
+##
+## The order between the two is the other half of that: an explicitly loose
+## surface beats the class too, so `highway=residential` + `surface=unpaved` is a
+## dirt street rather than tarmac.
+const SURFACE_LOOSE := [
+	"unpaved", "gravel", "fine_gravel", "compacted", "gravel_turf",
+	"dirt", "dirt_track", "ground", "earth", "earth_track",
+	"grass", "sand", "mud", "soil",
+]
+
+## Surfaces that are a made carriageway whatever the class says, so they
+## outrank CLASS_LOOSE below. Without this the paved paths are the casualty:
+## **380 ways in this extract are explicitly paved and were still drawn as gravel**,
+## almost all of them `highway=path`/`footway`/`cycleway` + `surface=asphalt` —
+## which is how a cycleway alongside a road is tagged, so the whole 312 of them
+## came out as a dirt track beside the tarmac they share a surface with.
+##
+## `wood`, `metal` and `rubber` are deliberately not here: a boardwalk is not a
+## carriageway at all, and asphalt is no more honest for one than gravel is.
+const SURFACE_PAVED := [
+	"asphalt", "paved", "pavement",
+	"paving_stones", "paved_stone", "cobblestone", "unhewn_cobblestone",
+	"sett", "pebblestone", "brick", "chipseal",
+	"concrete", "concrete:lanes", "concrete:plates",
+]
+
+## Highway classes that are loose unless the way says otherwise, because that is
+## what the tag means on its own: `highway=track` *is* an unpaved road and
+## `highway=path` is not a carriageway at all. Without this, the tracks are also
+## the largest group of ways in this extract (303 of 1239) and they would all come
+## out as tarmac.
+##
+## A way that names its own surface never reaches this: SURFACE_PAVED above puts
+## an asphalt path back on tarmac, and SURFACE_LOOSE takes a dirt track that
+## says so. This is only the default for the ways that say nothing.
+##
+## `highway=platform` is deliberately not here: it is a bus stop's pad, not a
+## track, and asphalt is the better guess for it.
+const CLASS_LOOSE := [
+	"track", "path", "footway", "cycleway", "bridleway", "steps",
+	"pedestrian", "corridor",
+]
+
+## The classes wide enough to be a big road, i.e. the ones that get the coarse
+## asphalt rather than the fine. RANK_MAJOR + RANK_MEDIUM: a residential street
+## and a farm track are both "small", and the difference between them is the
+## surface, not the size.
+const CLASS_LARGE := RANK_MAJOR + RANK_MEDIUM
+
 
 static func feature_name() -> String:
 	return "roads"
@@ -111,3 +169,29 @@ func class_rank() -> int:
 	if highway in RANK_MEDIUM:
 		return 1
 	return 0
+
+
+## Which road surface this way is drawn as: a key into OsmGroundData.ROAD_LOOKS.
+##
+## Loose first, then paved: either way a `surface` tag outranks the class, since a
+## survey is worth more than a default. Only a way that says nothing about its
+## surface falls back to the class, and there the split is whether the class
+## *is* a carriageway. Size picks between the two asphalts, which is all that is
+## left to separate them.
+func surface_look() -> String:
+	var surf := surface()
+	if surf in SURFACE_LOOSE:
+		return "gravel"
+	if surf in SURFACE_PAVED:
+		return _asphalt_look()
+	if highway_class() in CLASS_LOOSE:
+		return "gravel"
+	return _asphalt_look()
+
+
+## Which of the two asphalts, by the size of the road rather than anything it says
+## about its surface: a track that is tarmac is still a narrow one.
+func _asphalt_look() -> String:
+	if highway_class() in CLASS_LARGE:
+		return "asphalt_large"
+	return "asphalt_small"

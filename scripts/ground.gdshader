@@ -20,7 +20,12 @@ shader_type spatial;
 // (ax, az, bx, bz) in metres: a stroked feature's two ends, or one side of a
 // filled area's ring.
 uniform vec4 line_points[1408];
-// (half_width, kind, rank) for a line entry, and upload() adds the reach in w.
+// (half_width, kind, look * RANK_LOOK_PACK + rank) for a line entry, and upload()
+// adds the reach in w. The look and the rank share z because there is no fifth
+// component; a railway or watercourse entry has rank alone in it, which is what
+// the shader's road-only unpack reads back. Note that the two arrays put the kind
+// in different components, which is the CPU side's problem and not this one's:
+// see OsmGroundData._fill.
 uniform vec4 line_attrs[1408];
 uniform int line_count = 0;
 uniform vec4 area_points[576];
@@ -47,6 +52,20 @@ const float AREA_GRASS = 4.0;
 const float AREA_BEACH = 5.0;
 const float AREA_FOREST = 6.0;
 
+// Which road surface an entry is drawn as, and the channel order of the road look
+// vec3 below. Mirrored in OsmGroundData.ROAD_LOOKS, which is what binds a scan to
+// each one.
+const float ROAD_LOOK_GRAVEL = 0.0;
+const float ROAD_LOOK_SMALL_ASPHALT = 1.0;
+const float ROAD_LOOK_LARGE_ASPHALT = 2.0;
+
+// line_attrs.z carries class_rank() plus this times the road's surface look: the
+// array is four components and all four are spoken for. It only has to clear the
+// highest rank, which is 2. Unpacked per entry in line_masks, not accumulated
+// packed, because the rank is summed weighted and a packed sum could not be split
+// apart again afterwards.
+const float RANK_LOOK_PACK = 4.0;
+
 // The wave noise. Sampled by world position rather than by uv, so the waves do
 // not swim when the camera moves.
 uniform sampler3D ground_noise : repeat_enable;
@@ -64,15 +83,43 @@ uniform sampler3D forest_grass_noise : repeat_enable;
 
 // One ground scan per cover kind, sampled by ground.gdshader's own uv scale below
 // rather than by anything the tiles provide. Bound from OsmGroundData.COVER.
+//
+// soil_texture is also the forest floor's soil patch, which is the point of the
+// name: the same scan on the same ground, so it needs one sampler rather than two
+// copies of one file.
 uniform sampler2D soil_texture : source_color, repeat_enable;
 uniform sampler2D meadow_texture : source_color, repeat_enable;
 uniform sampler2D grass_texture : source_color, repeat_enable;
 uniform sampler2D beach_texture : source_color, repeat_enable;
 
+// One road scan per surface, sampled the same way. Bound from
+// OsmGroundData.ROAD_LOOKS. A railway and a watercourse are deliberately not here:
+// neither has a scan, and both stay a flat colour.
+uniform sampler2D road_gravel_texture : source_color, repeat_enable;
+uniform sampler2D road_small_texture : source_color, repeat_enable;
+uniform sampler2D road_large_texture : source_color, repeat_enable;
+
+// Metres one road scan covers, per surface, in the look order above. The uv is
+// world position over this, as it is for the cover kinds, so a road's grain does
+// not swim as the camera moves and does not restart when the arrays are repacked.
+uniform vec3 road_tile_m = vec3(2.0, 4.0, 4.0);
+// What each scan is multiplied by, same order again. The scans are photographs
+// and the terrain beside them is a flat colour, so at face value they do not sit
+// on the same ground: measured in linear, Asphalt023S averages 0.198 and
+// Asphalt025C 0.025 against a ground_color of 0.168, which is why the coarse
+// asphalt came out a black stripe beside a merely dark one. Both land on the
+// terrain's own brightness, so the two asphalts are told apart by their grain
+// rather than by one of them being a hole in the map, and the gravel comes down
+// to just above them because loose stone in daylight is lighter than tarmac.
+//
+// The coarse one is by far the largest factor of the three, and it moves
+// whenever that scan does: it is the measured mean of the file above over the
+// whole image, not a number the texture came with.
+uniform vec3 road_tint = vec3(0.83, 0.86, 2.5);
+
 uniform vec3 water_color : source_color = vec3(0.0, 0.0, 1.0);
 uniform vec3 ground_color : source_color = vec3(0.25, 0.5, 0.25);
 uniform vec3 hill_color : source_color = vec3(0.35, 0.3, 0.2);
-uniform vec3 road_color : source_color = vec3(0.4, 0.3, 0.2);
 uniform vec3 rail_color : source_color = vec3(0.5, 0.5, 0.5);
 
 // Metres one ground scan covers, per cover kind, in the channel order above.
@@ -185,9 +232,12 @@ float segment_distance_sq(vec2 p, vec2 a, vec2 b) {
 }
 
 
-// How much of each kind of line covers `p`, in (roads, railways, watercourses,
-// road rank). Overlapping features take the strongest coverage rather than adding
-// up, so a footway crossing a motorway leaves a motorway.
+// How much of each kind of line covers `p`, in `masks` as (roads, railways,
+// watercourses, road rank), and how much of each road surface in `looks`, one
+// channel per ROAD_LOOK_*. Overlapping features take the strongest coverage rather
+// than adding up, so a footway crossing a motorway leaves a motorway, and a gravel
+// service road crossing a tarmac one leaves whichever reaches further under the
+// fragment.
 //
 // `focus_dist` is how far `p` is from focus_metres and attr.w is how far the
 // segment reaches from the same point, so `focus_dist > attr.w + reach` proves the
@@ -195,8 +245,9 @@ float segment_distance_sq(vec2 p, vec2 a, vec2 b) {
 // and a subtract against a known distance, where segment_distance_sq below is a
 // dot product, a divide and a lerp: worth doing per entry, since it rejects
 // nearly all of them for nearly every fragment.
-vec4 line_masks(vec2 p, float focus_dist) {
-	vec4 masks = vec4(0.0);
+void line_masks(vec2 p, float focus_dist, out vec4 masks, out vec3 looks) {
+	vec4 found = vec4(0.0);
+	vec3 surfaces = vec3(0.0);
 	for (int i = 0; i < line_count; i++) {
 		vec4 attr = line_attrs[i];
 		float half_width = attr.x;
@@ -212,15 +263,24 @@ vec4 line_masks(vec2 p, float focus_dist) {
 		float coverage = 1.0 - smoothstep(half_width, reach, sqrt(distance_sq));
 		float kind = attr.y;
 		if (kind == KIND_ROAD) {
-			masks.x = max(masks.x, coverage);
-			masks.w += coverage * attr.z;
+			found.x = max(found.x, coverage);
+			float look = floor(attr.z / RANK_LOOK_PACK);
+			found.w += coverage * (attr.z - look * RANK_LOOK_PACK);
+			if (look < 0.5) {
+				surfaces.x = max(surfaces.x, coverage);
+			} else if (look < 1.5) {
+				surfaces.y = max(surfaces.y, coverage);
+			} else {
+				surfaces.z = max(surfaces.z, coverage);
+			}
 		} else if (kind == KIND_RAIL) {
-			masks.y = max(masks.y, coverage);
+			found.y = max(found.y, coverage);
 		} else {
-			masks.z = max(masks.z, coverage);
+			found.z = max(found.z, coverage);
 		}
 	}
-	return masks;
+	masks = found;
+	looks = surfaces;
 }
 
 
@@ -398,8 +458,9 @@ void fragment() {
 	// hundred metres and the view is four kilometres, so most fragments are past
 	// all of them and can skip the loops entirely.
 	vec4 lines = vec4(0.0);
+	vec3 road_looks = vec3(0.0);
 	if (focus_dist <= line_reach + FEATHER) {
-		lines = line_masks(p, focus_dist);
+		line_masks(p, focus_dist, lines, road_looks);
 	}
 	float area_water = 0.0;
 	vec4 cover = vec4(0.0);
@@ -472,10 +533,24 @@ void fragment() {
 			vec3 floor_albedo = mix(moss_albedo, patches, clamp(soil + grass, 0.0, 1.0));
 			albedo = mix(albedo, floor_albedo * forest_tint, forest);
 		}
-		// class_rank() again, this time as colour: a track is duller tarmac than
-		// a motorway, which is the same tag that made it narrower.
-		float rank = clamp(lines.w / max(lines.x, 0.001), 0.0, 1.0);
-		albedo = mix(albedo, road_color * mix(0.85, 1.15, rank), lines.x);
+		// Roads are three scans rather than one colour: the surface the way is
+		// tagged with picks which, and the look weights blend them the way the
+		// forest floor's patches do, so two roads meeting cross-fade instead of
+		// the far one stamping over the near one. Three fetches, gated on the same
+		// mask as everything else on this branch, so only fragments actually under
+		// a road pay for one.
+		float look_sum = road_looks.x + road_looks.y + road_looks.z;
+		if (look_sum > 0.0) {
+			vec3 road_albedo = (
+					texture(road_gravel_texture, p / road_tile_m.x).rgb * road_tint.x * road_looks.x
+					+ texture(road_small_texture, p / road_tile_m.y).rgb * road_tint.y * road_looks.y
+					+ texture(road_large_texture, p / road_tile_m.z).rgb * road_tint.z * road_looks.z)
+					/ look_sum;
+			// class_rank() again, this time as brightness: a track is duller
+			// tarmac than a motorway, which is the same tag that made it narrower.
+			float rank = clamp(lines.w / max(lines.x, 0.001), 0.0, 1.0);
+			albedo = mix(albedo, road_albedo * mix(0.85, 1.15, rank), lines.x);
+		}
 		albedo = mix(albedo, rail_color, lines.y);
 	}
 	ROUGHNESS = roughness;

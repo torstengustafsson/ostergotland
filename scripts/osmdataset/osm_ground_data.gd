@@ -139,6 +139,46 @@ const RING_TOLERANCE_CEILING := DETAIL_RADIUS
 ## bonus a village full of fields would push its own lake out of the array.
 const KIND_BONUS_M := { KIND_ROAD: 0.0, KIND_RAIL: 100.0, KIND_WATERWAY: 150.0 }
 const RANK_BONUS_M := 150.0
+
+## The road surfaces, as the three channels of the shader's road look vec3. The
+## order is that vec3's channel order and is the only place it is written down.
+##
+## A railway and a watercourse are not in this space: neither has a scan, and both
+## stay a flat colour (see KIND_RAIL / KIND_WATERWAY above).
+const LOOK_GRAVEL := 0
+const LOOK_SMALL_ASPHALT := 1
+const LOOK_LARGE_ASPHALT := 2
+
+## Which scan each road surface is drawn with, keyed by what
+## OsmRoad.surface_look() returns: the channel the shader keeps it in, the uniform
+## its scan is uploaded as, and the scan.
+##
+## Which scan goes with which surface is judgement and not something the tags say:
+## a fine-grained asphalt for the small roads so it does not show the width of the
+## carriageway in its own grain, a coarse one for the trunk roads where the extra
+## aggregate is what the eye reads as scale, and a loose ground for gravel and
+## dirt. The split between the two asphalts is the only one a road's tags force.
+##
+## **A surface missing here is dropped**, like a cover kind missing from COVER --
+## which for a road means no road rather than a flat one, so a key added to
+## OsmRoad.surface_look() needs a row here first.
+const ROAD_LOOKS := {
+	"gravel": [LOOK_GRAVEL, "road_gravel_texture",
+		"res://assets/textures/ground/Ground062S_1K-JPG_Color.jpg"],
+	"asphalt_small": [LOOK_SMALL_ASPHALT, "road_small_texture",
+		"res://assets/textures/ground/Asphalt023S_1K-JPG_Color.jpg"],
+	"asphalt_large": [LOOK_LARGE_ASPHALT, "road_large_texture",
+		"res://assets/textures/ground/Asphalt025C_1K-JPG_Color.jpg"],
+}
+
+## line_attrs.z carries class_rank() plus this times the road's surface look,
+## because the array is four components and all four are spoken for: (half_width,
+## kind, look, rank) would need a fifth. The factor only has to clear the highest
+## rank, and both are unpacked per entry in the shader rather than accumulated
+## packed, because the rank is summed weighted by coverage and a packed sum could
+## not be split apart again afterwards.
+const RANK_LOOK_PACK := 4.0
+
 const AREA_BONUS_M := {
 	AREA_WATER: 1200.0,
 	AREA_FARMLAND: 0.0, AREA_MEADOW: 0.0, AREA_GRASS: 0.0, AREA_BEACH: 0.0,
@@ -367,6 +407,13 @@ func bind(p_material: ShaderMaterial, p_index: OsmQuadtree) -> void:
 			push_error("OsmGroundData: no ground texture at %s" % row[2])
 			continue
 		material.set_shader_parameter(row[1], texture)
+	for entry in ROAD_LOOKS.values():
+		var look: Array = entry
+		var road_texture := load(look[2]) as Texture2D
+		if road_texture == null:
+			push_error("OsmGroundData: no road texture at %s" % look[2])
+			continue
+		material.set_shader_parameter(look[1], road_texture)
 	for patch: Array in FOREST_PATCHES.values():
 		material.set_shader_parameter(patch[0],
 				_make_forest_noise(patch[1], patch[2]))
@@ -438,6 +485,11 @@ func _rebuild(focus: Vector3) -> void:
 ## width, stroked at half of it. A feature with no width is skipped: a
 ## highway=proposed has nothing on the ground yet, and a lake's width_m() is 0
 ## because it goes into the area arrays instead.
+##
+## A road's third component is its surface look packed over its rank (see
+## RANK_LOOK_PACK); a railway or a watercourse has no look, so its rank goes in
+## alone and the shader, which unpacks only inside its KIND_ROAD branch, reads it
+## back as it was.
 func _stroke(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 		reach_m: float) -> void:
 	var max_segment_m := MAX_SEGMENT_UNITS * maxf(metres_per_unit.x, metres_per_unit.y)
@@ -447,8 +499,14 @@ func _stroke(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 			continue
 		var points := _in_metres(index.entry_points(feature))
 		var rank := float(feature.class_rank())
+		var look := 0.0
+		if kind == KIND_ROAD:
+			var found := _road_look(feature)
+			if found < 0:
+				continue
+			look = found * RANK_LOOK_PACK
 		var bonus: float = KIND_BONUS_M[kind] + rank * RANK_BONUS_M
-		var attr := Vector4(width * 0.5, float(kind), rank, 0.0)
+		var attr := Vector4(width * 0.5, float(kind), look + rank, 0.0)
 		for i in points.size() - 1:
 			var a := points[i]
 			var b := points[i + 1]
@@ -502,7 +560,7 @@ func _fill(features: Array[OsmFeature], p_default_kind: int, focus_m: Vector2,
 			continue
 		# The kind goes in x, because that is where the shader reads it: the area
 		# arrays are (kind, 0, 0, reach), unlike the line arrays' (half_width,
-		# kind, rank, reach).
+		# kind, look + rank, reach).
 		var attr := Vector4(float(kind), 0.0, 0.0, 0.0)
 		var bonus: float = AREA_BONUS_M[kind]
 		var ring := PackedVector4Array()
@@ -521,7 +579,6 @@ func _fill(features: Array[OsmFeature], p_default_kind: int, focus_m: Vector2,
 
 
 ## The shader area kind `feature` is drawn as, or -1 for none.
-##
 ## Ground cover names its own through COVER, because a group of cover is a mix of
 ## kinds rather than one; everything else takes `p_default_kind`. A cover polygon
 ## whose tag is not in COVER comes back -1 and is dropped here rather than drawn
@@ -531,6 +588,17 @@ static func _area_kind(feature: OsmFeature, p_default_kind: int) -> int:
 		var row: Array = COVER.get((feature as OsmGroundCover).cover_kind(), [])
 		return -1 if row.is_empty() else int(row[0])
 	return p_default_kind
+
+
+## The shader road look `feature` is drawn as, or -1 for one with no scan. A road
+## names its own surface, so there is no default to fall back to: -1 drops the
+## segment, which is why ROAD_LOOKS has to have a row for every key
+## OsmRoad.surface_look() can return.
+static func _road_look(feature: OsmFeature) -> int:
+	if not feature is OsmRoad:
+		return -1
+	var row: Array = ROAD_LOOKS.get((feature as OsmRoad).surface_look(), [])
+	return -1 if row.is_empty() else int(row[0])
 
 
 ## A ring's points ready for the edge loop: cut down to what the area array can
