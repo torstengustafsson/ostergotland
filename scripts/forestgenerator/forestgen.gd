@@ -34,32 +34,36 @@ enum TreeSpecies {
 	NoSpecies,
 }
 
-## Each forest type's trees per square metre per species (oak, spruce, maple) for each stand type.
+## Each forest type's trees per square metre per species (oak, spruce, maple,
+## aspen, birch, pine) for each stand type. Nothing here is restricted to one
+## tree per cell -- see _plan() and _extra().
 const FOREST_TYPE_TREES = {
 	ForestType.LeafyForest: {
-		TreeSpecies.Oak: 0.005,
-		TreeSpecies.Spruce: 0.001,
-		TreeSpecies.Maple: 0.002,
-		TreeSpecies.Aspen: 0.001,
-		TreeSpecies.Birch: 0.002,
-		TreeSpecies.Pine: 0.001,
+		TreeSpecies.Oak: 0.001,
+		TreeSpecies.Spruce: 0.0002,
+		TreeSpecies.Maple: 0.0004,
+		TreeSpecies.Aspen: 0.0005,
+		TreeSpecies.Birch: 0.0005,
+		TreeSpecies.Pine: 0.00025,
 	},
 	ForestType.ConiferousForest: {
-		TreeSpecies.Oak: 0.001,
-		TreeSpecies.Spruce: 0.004,
-		TreeSpecies.Maple: 0.0,
-		TreeSpecies.Aspen: 0.0,
-		TreeSpecies.Birch: 0.001,
-		TreeSpecies.Pine: 0.004,
+		TreeSpecies.Oak: 0.0001,
+		TreeSpecies.Spruce: 0.0005,
+		TreeSpecies.Maple: 0.00005,
+		TreeSpecies.Aspen: 0.0001,
+		TreeSpecies.Birch: 0.0005,
+		TreeSpecies.Pine: 0.002,
 	}
 }
 
 class ForestSectionPlan:
 	var species: TreeSpecies
-	var count: int
-	func _init(_species: TreeSpecies, _count: int):
+	var count := 0       ## whole trees this rectangle gets for certain
+	var remainder := 0.0 ## chance of one more, from the fractional part
+	func _init(_species: TreeSpecies, expected: float):
 		species = _species
-		count = _count
+		count = floori(expected)
+		remainder = expected - float(count)
 
 ## Baked meshes per species. One tree costs tens of milliseconds to generate and
 ## they are all identical apart from their seed, so they are baked once for the
@@ -73,11 +77,16 @@ class ForestSectionPlan:
 const VARIANTS := 10
 
 ## A forest is hundreds of these and the presets are authored as one hero tree, so
-## they get cut down before baking: leaves are 82% of an oak's 107 691 vertices
-## and 94% of a spruce's 299 377. Same silhouette, far fewer leaves and twigs --
-## the only sensible thing to do with a tree 20-200 m away. TreeGenPresets is used
-## nowhere else, so the knobs live here rather than in the presets to keep the
-## hero tree available.
+## they get cut down before baking: leaves are 80-92% of a hero tree (an oak is
+## 87%, a spruce 92%). Same silhouette, far fewer leaves and twigs -- the only
+## sensible thing to do with a tree 20-200 m away. TreeGenPresets is used nowhere
+## else, so the knobs live here rather than in the presets to keep the hero tree
+## available.
+##
+## The cut lands the other way up from what it starts as: leaves go to 45-62% and
+## bark becomes the larger half (an oak is 18813 bark to 16339 leaves). Nothing
+## further is spent on the bark beyond LOD_BARK_RINGS, which is why the twig
+## geometry is what is left to draw at distance.
 const LOD_MAX_DEPTH := 4
 const LOD_BARK_RINGS := 8
 const LOD_LEAF_DENSITY := 0.12
@@ -142,7 +151,7 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 	rng.seed = seed_value
 	for entry in plan:
 		var transforms: Array = []
-		for _i in entry.count:
+		for _i in entry.count + _extra(entry.remainder, rng):
 			var spot := _random_point_in(points, rect, rng)
 			if spot != Vector2.INF:
 				transforms.append(_tree_transform(spot, rng))
@@ -181,15 +190,31 @@ func needs_ready(type: ForestType, area: float) -> bool:
 
 ## What a stand of this type covering `area` m2 would grow, as one
 ## [species, tree count] per species that gets at least one tree, in drawing order.
+##
+## The count is the floor of `density * area` and the fraction is carried in
+## `remainder` rather than dropped, so a density below 1/cell_area does not round
+## away to nothing in every cell. See _extra().
 func _plan(type: ForestType, area: float) -> Array:
 	var densities: Dictionary = FOREST_TYPE_TREES[type]
 	var plan: Array = []
 	for species in densities.keys():
 		var density = densities[species]
-		var count := floori(float(density) * area)
-		if count > 0:
-			plan.append(ForestSectionPlan.new(species, count))
+		var expected := float(density) * area
+		if expected > 0.0:
+			plan.append(ForestSectionPlan.new(species, expected))
 	return plan
+
+
+## One more tree with probability `remainder` -- the fractional part of the
+## expected count, rounded stochastically instead of down. Without it a density
+## under 1/cell_area floors to zero in every cell and the forest silently
+## disappears, and the only densities that worked were the ones that happened to
+## clear one tree per cell. The draw comes from the cell's own rng, so a cell
+## still replants exactly the trees it planted before.
+static func _extra(remainder: float, rng: RandomNumberGenerator) -> int:
+	if remainder <= 0.0:
+		return 0
+	return 1 if rng.randf() < remainder else 0
 
 
 ## Bakes the next wanted mesh and returns whether it did one. A caller with a
@@ -230,8 +255,11 @@ func baking() -> int:
 	return left
 
 
-## Asks for up to VARIANTS meshes of `species`, or `trees` if that is fewer --
-## variety is only worth baking for a species that actually appears more than once.
+## Asks for up to VARIANTS meshes of `species`, or as many as the plan calls for
+## if that is fewer -- variety is only worth baking for a species that actually
+## appears more than once. A plan can call for a fraction of a tree per cell, and
+## the floor of 1 still applies to it: without a mesh there is nothing to plant
+## the occasional tree with.
 func request_baking(plan: ForestSectionPlan) -> void:
 	var want := clampi(plan.count, 1, VARIANTS)
 	if _wanted_count.has(plan.species):

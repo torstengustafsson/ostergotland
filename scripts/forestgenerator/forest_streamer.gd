@@ -27,14 +27,16 @@ class_name ForestStreamer extends RefCounted
 ## against the cost of growing it.
 const RADIUS := 200.0
 
-## Side of one streaming cell, in metres. Two things set it and they pull against
-## each other:
-##  - **The tree spacing.** A cell gets `density * cell_area` trees, so it has to
-##    be big enough to hold one: at 0.001/m^2 a 16 m cell gets floori(0.256) = 0
-##    trees and the forest silently disappears, while 32 m gets exactly 1. This is
-##    the binding constraint, and it is why CELL is not smaller.
+## Side of one streaming cell, in metres. Two things set it:
+##  - **When woodland arrives.** A cell is grown only once the player comes within
+##    RADIUS of it, so a smaller cell plants closer to the horizon.
 ##  - **The AABB a cell's MultiMeshes present to the frustum culler.** Bigger cells
 ##    cull worse.
+##
+## Tree spacing used to bound this from below -- a cell had to be big enough to
+## hold a whole tree or a sparse forest vanished -- but ForestGen now rounds a
+## fraction of a tree stochastically, so no density is out of reach and only
+## culling holds CELL up.
 const CELL := 32.0
 
 ## How far the player has to move before the cells are looked at again. A cell only

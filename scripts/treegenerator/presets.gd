@@ -65,7 +65,7 @@ static func _oak_canopy_set() -> TreeGenBranchSet:
 	var canopy := TreeGenBranchSet.new()
 	canopy.branch_length = 0.65
 	canopy.branch_length_variation = 0.15
-	canopy.branch_radius_fraction = 0.5
+	canopy.branch_radius_fraction = 0.65
 	canopy.branch_tip_taper = 0.1
 	canopy.branch_angle = deg_to_rad(50.0)
 	canopy.branch_angle_variation = deg_to_rad(10.0)
@@ -118,7 +118,7 @@ static func _oak_leaves() -> TreeGenLeafSet:
 	var leaves := TreeGenLeafSet.new()
 	leaves.leaf_count = 30
 	leaves.leaf_count_variation = 0.3
-	leaves.leaf_size = 0.3
+	leaves.leaf_size = 1.0
 	leaves.leaf_size_variation = 0.15
 	leaves.leaf_aspect = 1.0 # 0.75
 	leaves.leaf_aspect_variation = 0.15
@@ -197,15 +197,15 @@ static func _spruce_twig_set(has_more_twigs, density) -> TreeGenBranchSet:
 	twig.segments = 2
 	if has_more_twigs:
 		twig.child_branch_sets = [_spruce_twig_set(false, density)]
-	twig.leaf_sets = [_spruce_needles(64, 0.25)]
+	twig.leaf_sets = [_spruce_needles()]
 	return twig
 
 
-static func _spruce_needles(leaf_count, leaf_size) -> TreeGenLeafSet:
+static func _spruce_needles() -> TreeGenLeafSet:
 	var needles := TreeGenLeafSet.new()
-	needles.leaf_count = leaf_count
+	needles.leaf_count = 50
 	needles.leaf_count_variation = 0.2
-	needles.leaf_size = leaf_size
+	needles.leaf_size = 0.75
 	needles.leaf_size_variation = 0.15
 	needles.leaf_aspect = 1.0 # 0.3
 	needles.leaf_aspect_variation = 0.1
@@ -283,7 +283,7 @@ static func _maple_leaves() -> TreeGenLeafSet:
 	var leaves := TreeGenLeafSet.new()
 	leaves.leaf_count = 18
 	leaves.leaf_count_variation = 0.25
-	leaves.leaf_size = 0.34
+	leaves.leaf_size = 1.2
 	leaves.leaf_size_variation = 0.18
 	leaves.leaf_aspect = 1.0 # 0.8
 	leaves.leaf_aspect_variation = 0.15
@@ -361,7 +361,7 @@ static func _aspen_leaves() -> TreeGenLeafSet:
 	var leaves := TreeGenLeafSet.new()
 	leaves.leaf_count = 25
 	leaves.leaf_count_variation = 0.25
-	leaves.leaf_size = 0.34
+	leaves.leaf_size = 1.0
 	leaves.leaf_size_variation = 0.18
 	leaves.leaf_aspect = 1.0 # 0.8
 	leaves.leaf_aspect_variation = 0.15
@@ -439,7 +439,7 @@ static func _birch_leaves() -> TreeGenLeafSet:
 	var leaves := TreeGenLeafSet.new()
 	leaves.leaf_count = 30
 	leaves.leaf_count_variation = 0.25
-	leaves.leaf_size = 0.34
+	leaves.leaf_size = 1.5
 	leaves.leaf_size_variation = 0.18
 	leaves.leaf_aspect = 1.0 # 0.8
 	leaves.leaf_aspect_variation = 0.15
@@ -517,7 +517,7 @@ static func _pine_leaves() -> TreeGenLeafSet:
 	var leaves := TreeGenLeafSet.new()
 	leaves.leaf_count = 30
 	leaves.leaf_count_variation = 0.25
-	leaves.leaf_size = 0.34
+	leaves.leaf_size = 1.3
 	leaves.leaf_size_variation = 0.18
 	leaves.leaf_aspect = 1.0 # 0.8
 	leaves.leaf_aspect_variation = 0.15

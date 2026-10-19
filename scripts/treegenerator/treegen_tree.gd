@@ -14,6 +14,12 @@ var trunk_segments := 4   ## subdivisions of the trunk (branch set density is re
 var trunk_tip_taper := 0.55 ## radius fraction kept at the trunk top
 var bark_rings := 8       ## vertices per cross-section ring on trunk and branches
 
+## Floor on the radius of every branch, in metres. Radii are otherwise a product
+## down the chain (parent x fraction x tip_taper), so the deepest twigs taper to
+## sub-millimetre and vanish. Flooring both ends of the taper also makes a twig
+## never thicker than the branch it grows out of, since every factor is <= 1.
+var min_branch_radius := 0.03
+
 ## -- Bark appearance ---------------------------------------------------------
 var bark_texture: Texture2D
 var bark_color := Color(0.4, 0.27, 0.16) ## used when `bark_texture` is null

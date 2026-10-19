@@ -60,7 +60,8 @@ static func _build_trunk_radii(tree: TreeGenTree) -> PackedFloat32Array:
 	for segment_index in range(segment_count + 1):
 		var fraction := float(segment_index) / float(segment_count)
 		var base_bulge := 1.0 + 0.08 * sin(fraction * PI) ## widest just above the ground
-		radii.append(tree.trunk_radius * lerpf(1.0, tree.trunk_tip_taper, fraction) * base_bulge)
+		radii.append(maxf(tree.trunk_radius * lerpf(1.0, tree.trunk_tip_taper, fraction) * base_bulge,
+				tree.min_branch_radius))
 	return radii
 
 
@@ -92,7 +93,8 @@ static func _expand_branch_set(
 
 	for stem_index in range(stem_count):
 		var branch := _grow_branch(
-			parent_branch, branch_set, depth, attach_fractions[stem_index], stem_azimuths[stem_index], random
+			parent_branch, branch_set, tree, depth, attach_fractions[stem_index],
+			stem_azimuths[stem_index], random
 		)
 		parent_branch.child_branches.append(branch)
 
@@ -161,6 +163,7 @@ static func _build_stem_azimuths(
 static func _grow_branch(
 	parent_branch: TreeGenSkeleton.BranchNode,
 	branch_set: TreeGenBranchSet,
+	tree: TreeGenTree,
 	depth: int,
 	attach_fraction: float,
 	azimuth: float,
@@ -181,9 +184,10 @@ static func _grow_branch(
 	branch_length *= 1.0 + random.randf_range(-branch_set.branch_length_variation, branch_set.branch_length_variation) * 0.5
 	branch.length = maxf(branch_length, 0.01)
 
-	# Radius: relative to the parent's radius at the attach point.
-	var base_radius := maxf(parent_radius * branch_set.branch_radius_fraction * random.randf_range(0.9, 1.1), 0.002)
-	var tip_radius := base_radius * branch_set.branch_tip_taper
+	# Radius: relative to the parent's radius at the attach point, with both ends
+	# of the taper floored so it flattens rather than inverting at the floor.
+	var base_radius := maxf(parent_radius * branch_set.branch_radius_fraction * random.randf_range(0.9, 1.1), tree.min_branch_radius)
+	var tip_radius := maxf(base_radius * branch_set.branch_tip_taper, tree.min_branch_radius)
 
 	# Direction:
 	#   - elevation deviates from the parent tangent (tapered toward upright at
