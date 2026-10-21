@@ -1,29 +1,15 @@
-class_name TreeGenPresets
+class_name TreeGenPresetsAdult
+extends TreeGenPresetsCommon
+
 ## Static builders for a handful of classic trees, styled after the reference
 ## species in "Creation and Rendering of Realistic Trees" (Weber & Penn, 1995):
 ## an oak, a maple, a spruce, a weeping willow, an elm (vase form) and a palm.
 ## Every builder takes an optional `random_seed`; the default 0 makes a new,
 ## unique tree on each call, and passing a fixed seed reproduces the same tree.
-
-static var BARK_TEXTURE_OAK: Texture2D = load("res://assets/textures/bark/Bark001_1K-JPG_Color.jpg")
-static var BARK_TEXTURE_SPRUCE: Texture2D = load("res://assets/textures/bark/Bark008_1K-JPG_Color.jpg")
-static var BARK_TEXTURE_MAPLE: Texture2D = load("res://assets/textures/bark/Bark005_1K-JPG_Color.jpg")
-static var BARK_TEXTURE_ASPEN: Texture2D = load("res://assets/textures/bark/Bark009_1K-JPG_Color.jpg")
-static var BARK_TEXTURE_BIRCH: Texture2D = load("res://assets/textures/bark/Bark007_1K-JPG_Color.jpg")
-static var BARK_TEXTURE_PINE: Texture2D = load("res://assets/textures/bark/Bark004_1K-JPG_Color.jpg")
-static var LEAF_TEXTURE_OAK: Texture2D = load("res://assets/textures/leaves/leaf-oak.png")
-static var LEAF_TEXTURE_SPRUCE: Texture2D = load("res://assets/textures/leaves/leaf-spruce-three.png")
-static var LEAF_TEXTURE_MAPLE: Texture2D = load("res://assets/textures/leaves/leaf-maple.png")
-static var LEAF_TEXTURE_ASPEN: Texture2D = load("res://assets/textures/leaves/leaf-aspen.png")
-static var LEAF_TEXTURE_BIRCH: Texture2D = load("res://assets/textures/leaves/leaf-birch.png")
-static var LEAF_TEXTURE_PINE: Texture2D = load("res://assets/textures/leaves/leaf-pine.png")
-
-static func _base_tree(trunk_height: float, trunk_radius: float, bark_texture: Texture2D) -> TreeGenTree:
-	var tree := TreeGenTree.new()
-	tree.trunk_height = trunk_height
-	tree.trunk_radius = trunk_radius
-	tree.bark_texture = bark_texture
-	return tree
+##
+## These are the grown trees. The saplings are in TreeGenPresetsYoung, which
+## grows its own trees rather than these ones scaled down, and the textures
+## both ages share are in TreeGenPresetsCommon.
 
 
 ## -- Oak ---------------------------------------------------------------------
@@ -31,7 +17,7 @@ static func _base_tree(trunk_height: float, trunk_radius: float, bark_texture: T
 ## Builds an oak tree. Pass a fixed `random_seed` to reproduce the exact same
 ## tree; the default 0 generates a new, unique tree on every call.
 static func oak(random_seed: int = 0) -> TreeGenTree:
-	var tree := _base_tree(28.0, 0.55, BARK_TEXTURE_OAK)
+	var tree := base_tree(28.0, 0.55, BARK_TEXTURE_OAK)
 	tree.random_seed = random_seed
 	tree.trunk_segments = 4
 	tree.trunk_tip_taper = 0.5
@@ -134,7 +120,7 @@ static func _oak_leaves() -> TreeGenLeafSet:
 ## -- Spruce ------------------------------------------------------------------
 
 static func spruce(random_seed: int = 0) -> TreeGenTree:
-	var tree := _base_tree(18.0, 0.5, BARK_TEXTURE_SPRUCE)
+	var tree := base_tree(18.0, 0.5, BARK_TEXTURE_SPRUCE)
 	tree.random_seed = random_seed
 	tree.trunk_segments = 9
 	tree.trunk_tip_taper = 0.25
@@ -220,7 +206,7 @@ static func _spruce_needles() -> TreeGenLeafSet:
 ## -- Maple -------------------------------------------------------------------
 
 static func maple(random_seed: int = 0) -> TreeGenTree:
-	var tree := _base_tree(26.0, 0.5, BARK_TEXTURE_MAPLE)
+	var tree := base_tree(26.0, 0.5, BARK_TEXTURE_MAPLE)
 	tree.random_seed = random_seed
 	tree.trunk_segments = 5
 	tree.trunk_tip_taper = 0.55
@@ -299,7 +285,7 @@ static func _maple_leaves() -> TreeGenLeafSet:
 ## -- Aspen ----------------------------------------------------------
 
 static func aspen(random_seed: int = 0) -> TreeGenTree:
-	var tree := _base_tree(24.0, 0.4, BARK_TEXTURE_ASPEN)
+	var tree := base_tree(24.0, 0.4, BARK_TEXTURE_ASPEN)
 	tree.random_seed = random_seed
 	tree.trunk_segments = 6
 	tree.trunk_tip_taper = 0.4
@@ -377,7 +363,7 @@ static func _aspen_leaves() -> TreeGenLeafSet:
 ## -- Birch ----------------------------------------------------------
 
 static func birch(random_seed: int = 0) -> TreeGenTree:
-	var tree := _base_tree(25.0, 0.6, BARK_TEXTURE_BIRCH)
+	var tree := base_tree(25.0, 0.6, BARK_TEXTURE_BIRCH)
 	tree.random_seed = random_seed
 	tree.trunk_segments = 6
 	tree.trunk_tip_taper = 0.4
@@ -455,7 +441,7 @@ static func _birch_leaves() -> TreeGenLeafSet:
 ## -- Pine ----------------------------------------------------------
 
 static func pine(random_seed: int = 0) -> TreeGenTree:
-	var tree := _base_tree(30.0, 0.7, BARK_TEXTURE_PINE)
+	var tree := base_tree(30.0, 0.7, BARK_TEXTURE_PINE)
 	tree.random_seed = random_seed
 	tree.trunk_segments = 6
 	tree.trunk_tip_taper = 0.4
@@ -533,7 +519,7 @@ static func _pine_leaves() -> TreeGenLeafSet:
 ## -- Elm (vase form) ----------------------------------------------------------
 
 static func elm(random_seed: int = 0) -> TreeGenTree:
-	var tree := _base_tree(9.0, 0.5, BARK_TEXTURE_MAPLE) # TODO
+	var tree := base_tree(9.0, 0.5, BARK_TEXTURE_MAPLE) # TODO
 	tree.random_seed = random_seed
 	tree.trunk_segments = 5
 	tree.trunk_tip_taper = 0.5
@@ -612,7 +598,7 @@ static func _elm_leaves() -> TreeGenLeafSet:
 ## -- Palm ---------------------------------------------------------------------
 
 static func palm(random_seed: int = 0) -> TreeGenTree:
-	var tree := _base_tree(8.0, 0.3, BARK_TEXTURE_MAPLE) # TODO
+	var tree := base_tree(8.0, 0.3, BARK_TEXTURE_MAPLE) # TODO
 	tree.random_seed = random_seed
 	tree.trunk_segments = 6
 	tree.trunk_tip_taper = 0.7

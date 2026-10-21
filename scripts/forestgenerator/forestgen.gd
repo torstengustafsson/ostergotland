@@ -18,6 +18,11 @@ class_name ForestGen extends Node3D
 ## cost: baking one oak is ~30 ms against ~2 ms to place a tree. Baking is
 ## therefore one mesh per bake_next() call rather than per stand, and only for the
 ## species something actually needs.
+##
+## A stand holds trees of two ages (TreeAge), and they are separate meshes: a
+## sapling is a tree of its own, grown from its own preset, never a scaled
+## adult, so a (species, age) pair is what a mesh is baked for and what a
+## density is counted per.
 
 enum ForestType {
 	LeafyForest,
@@ -34,41 +39,72 @@ enum TreeSpecies {
 	NoSpecies,
 }
 
+## The two ages a tree is planted at. A young tree is the same species grown
+## small -- its own preset, its own mesh, see TreeGenPresetsYoung -- and a
+## stand holds both: the adults carry the canopy, the young ones the
+## understory under it.
+enum TreeAge {
+	Adult,
+	Young,
+}
+
 ## Each forest type's trees per square metre per species (oak, spruce, maple,
-## aspen, birch, pine) for each stand type. Nothing here is restricted to one
-## tree per cell -- see _plan() and _extra().
+## aspen, birch, pine), for the adults and for the young ones separately.
+## Nothing here is restricted to one tree per cell -- see _plan() and _extra().
 const FOREST_TYPE_TREES = {
 	ForestType.LeafyForest: {
-		TreeSpecies.Oak: 0.001,
-		TreeSpecies.Spruce: 0.0002,
-		TreeSpecies.Maple: 0.0004,
-		TreeSpecies.Aspen: 0.0005,
-		TreeSpecies.Birch: 0.0005,
-		TreeSpecies.Pine: 0.00025,
+		TreeAge.Adult: {
+			TreeSpecies.Oak: 0.001,
+			TreeSpecies.Spruce: 0.0002,
+			TreeSpecies.Maple: 0.0004,
+			TreeSpecies.Aspen: 0.0005,
+			TreeSpecies.Birch: 0.0005,
+			TreeSpecies.Pine: 0.00025,
+		},
+		TreeAge.Young: {
+			TreeSpecies.Oak: 0.0006,
+			TreeSpecies.Spruce: 0.0002,
+			TreeSpecies.Maple: 0.0003,
+			TreeSpecies.Aspen: 0.0005,
+			TreeSpecies.Birch: 0.0004,
+			TreeSpecies.Pine: 0.00015,
+		},
 	},
 	ForestType.ConiferousForest: {
-		TreeSpecies.Oak: 0.0001,
-		TreeSpecies.Spruce: 0.0005,
-		TreeSpecies.Maple: 0.00005,
-		TreeSpecies.Aspen: 0.0001,
-		TreeSpecies.Birch: 0.0005,
-		TreeSpecies.Pine: 0.002,
+		TreeAge.Adult: {
+			TreeSpecies.Oak: 0.0001,
+			TreeSpecies.Spruce: 0.0005,
+			TreeSpecies.Maple: 0.00005,
+			TreeSpecies.Aspen: 0.0001,
+			TreeSpecies.Birch: 0.0005,
+			TreeSpecies.Pine: 0.002,
+		},
+		TreeAge.Young: {
+			TreeSpecies.Oak: 0.0001,
+			TreeSpecies.Spruce: 0.0004,
+			TreeSpecies.Maple: 0.00005,
+			TreeSpecies.Aspen: 0.00015,
+			TreeSpecies.Birch: 0.0004,
+			TreeSpecies.Pine: 0.001,
+		},
 	}
 }
 
 class ForestSectionPlan:
 	var species: TreeSpecies
+	var age: TreeAge
 	var count := 0       ## whole trees this rectangle gets for certain
 	var remainder := 0.0 ## chance of one more, from the fractional part
-	func _init(_species: TreeSpecies, expected: float):
+	func _init(_species: TreeSpecies, _age: TreeAge, expected: float):
 		species = _species
+		age = _age
 		count = floori(expected)
 		remainder = expected - float(count)
 
-## Baked meshes per species. One tree costs tens of milliseconds to generate and
-## they are all identical apart from their seed, so they are baked once for the
-## whole run and shared. Several rather than one so neighbouring stands do not all
-## get the same tree.
+## Baked meshes per species and age. One tree costs tens of milliseconds to
+## generate and they are all identical apart from their seed, so they are baked
+## once for the whole run and shared. Several rather than one so neighbouring
+## stands do not all get the same tree.
 ##
 ## This number is nearly free, which is worth knowing before anyone tries to raise
 ## it: a frame pays for instances x vertices-per-tree, and splitting those
@@ -79,8 +115,8 @@ const VARIANTS := 10
 ## A forest is hundreds of these and the presets are authored as one hero tree, so
 ## they get cut down before baking: leaves are 80-92% of a hero tree (an oak is
 ## 87%, a spruce 92%). Same silhouette, far fewer leaves and twigs -- the only
-## sensible thing to do with a tree 20-200 m away. TreeGenPresets is used nowhere
-## else, so the knobs live here rather than in the presets to keep the hero tree
+## sensible thing to do with a tree 20-200 m away. The presets are used nowhere
+## else, so the knobs live here rather than in them to keep the hero tree
 ## available.
 ##
 ## The cut lands the other way up from what it starts as: leaves go to 45-62% and
@@ -107,19 +143,24 @@ const CONIFEROUS := ["needleleaved", "spruce", "pine", "conifer"]
 ## clear the tallest terrain.
 const GROUND_PROBE := 500.0
 
+## The metadata key under which a tree node records its age, so a caller can
+## tell the adults of a stand from the understory planted with them.
+const AGE_META := "tree_age"
+
 ## Recycled MultiMeshInstance3Ds, emptied. See recycle().
 var _pool: Array[MultiMeshInstance3D] = []
-## Baked meshes per species, filled by bake_next().
+## Baked meshes per (species, age), filled by bake_next(). The pair is the key
+## because a sapling is its own mesh, not a scaled adult.
 var _meshes: Dictionary = {}
-## Species that have been asked for, in the order they were first needed, which is
-## the order _next_species() round-robins them in.
-var _wanted: Array[int] = []
-## How many meshes each species is wanted for, at most VARIANTS but no more than
-## the trees it is wanted for: a stand with one spruce in it does not need ten
-## different spruce meshes. It only ever goes up, so a species that turns out to
-## be common gets its full set.
+## The (species, age) pairs that have been asked for, in the order they were
+## first needed, which is the order _next_wanted() round-robins them in.
+var _wanted: Array[Vector2i] = []
+## How many meshes each (species, age) is wanted for, at most VARIANTS but no
+## more than the trees it is wanted for: a stand with one spruce in it does not
+## need ten different spruce meshes. It only ever goes up, so a species that
+## turns out to be common gets its full set.
 var _wanted_count: Dictionary = {}
-## Where _next_species() starts looking, i.e. the one after the last one baked.
+## Where _next_wanted() starts looking, i.e. the one after the last one baked.
 var _cursor := 0
 ## One raycast, reused for every tree: a stand is thousands of them and a fresh
 ## PhysicsRayQueryParameters3D each time is thousands of allocations.
@@ -128,6 +169,10 @@ var _ground_ray := PhysicsRayQueryParameters3D.create(Vector3.ZERO, Vector3.UP)
 
 ## Grows the part of one forest that falls inside `rect`, as one
 ## MultiMeshInstance3D per baked variant the trees land on.
+##
+## Both ages are grown: the adults at the stand's own density and the young
+## ones at theirs, each from its own meshes, so a stand comes up with an
+## understory under its canopy rather than with only the canopy.
 ##
 ## `seed_value` is what makes this safe to re-enter: the same rectangle of the same
 ## forest gives the same trees every time, so a tree never moves because a
@@ -154,20 +199,21 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 		for _i in entry.count + _extra(entry.remainder, rng):
 			var spot := _random_point_in(points, rect, rng)
 			if spot != Vector2.INF:
-				transforms.append(_tree_transform(spot, rng))
+				transforms.append(_tree_transform(spot, entry.age, rng))
 		if transforms.is_empty():
 			continue
+		var meshes := _baked(_key(entry.species, entry.age))
 		# Spread over the variants, so a cell is not one tree repeated. The split
 		# costs one draw call each, which measured as free (see VARIANTS).
 		var groups: Array = []
-		for _v in _baked(entry.species).size():
+		for _v in meshes.size():
 			groups.append([])
 		for tree_transform in transforms:
 			var group: Array = groups[randi() % groups.size()]
 			group.append(tree_transform)
 		for i in groups.size():
 			if not groups[i].is_empty():
-				added.append(_multimesh(_baked(entry.species)[i], groups[i]))
+				added.append(_multimesh(meshes[i], groups[i], entry.age))
 	return added
 
 
@@ -179,17 +225,22 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 ## stand in front of the player is planted two frames in, when one variant exists,
 ## and every tree in it is that one mesh, which makes VARIANTS pointless. The wait
 ## costs no real time: the baking happens either way.
+##
+## A stand needs the meshes of both ages, so nothing is planted until the
+## saplings are baked too.
 func needs_ready(type: ForestType, area: float) -> bool:
 	var all_baked := true
 	for entry in _plan(type, area):
 		request_baking(entry)
-		if _baked(entry.species).size() < _wanted_count[entry.species]:
+		var key := _key(entry.species, entry.age)
+		if _baked(key).size() < _wanted_count[key]:
 			all_baked = false
 	return all_baked
 
 
 ## What a stand of this type covering `area` m2 would grow, as one
-## [species, tree count] per species that gets at least one tree, in drawing order.
+## [species, age, tree count] per species and age that gets at least one tree, in
+## drawing order.
 ##
 ## The count is the floor of `density * area` and the fraction is carried in
 ## `remainder` rather than dropped, so a density below 1/cell_area does not round
@@ -197,11 +248,12 @@ func needs_ready(type: ForestType, area: float) -> bool:
 func _plan(type: ForestType, area: float) -> Array:
 	var densities: Dictionary = FOREST_TYPE_TREES[type]
 	var plan: Array = []
-	for species in densities.keys():
-		var density = densities[species]
-		var expected := float(density) * area
-		if expected > 0.0:
-			plan.append(ForestSectionPlan.new(species, expected))
+	for age in densities.keys():
+		for species in densities[age].keys():
+			var density = densities[age][species]
+			var expected := float(density) * area
+			if expected > 0.0:
+				plan.append(ForestSectionPlan.new(species, age, expected))
 	return plan
 
 
@@ -222,51 +274,59 @@ static func _extra(remainder: float, rng: RandomNumberGenerator) -> int:
 ## the procedural geometry over frames instead of dropping it all into the first
 ## one.
 func bake_next() -> bool:
-	var species := _next_species()
-	if species == TreeSpecies.NoSpecies:
+	var key := _next_wanted()
+	if key.x == TreeSpecies.NoSpecies:
 		return false
-	var tree: TreeGenTree = _preset(species).call(randi())
+	var tree: TreeGenTree = _preset(key.x as TreeSpecies, key.y as TreeAge).call(randi())
 	_apply_lod(tree)
 	tree.regenerate()
-	_baked(species).append(tree.mesh)
+	_baked(key).append(tree.mesh)
 	tree.free()
 	return true
 
 
-## Which species to bake next: the one *after* the last one baked, so every species
-## reaches its first mesh before any of them reaches its second. Taking simply the
-## first species with room left is not round-robin: a cell holding one spruce and
-## four oaks would then wait for all ten oak variants.
-func _next_species() -> TreeSpecies:
+## Which (species, age) to bake next: the one *after* the last one baked, so
+## every species reaches its first mesh before any of them reaches its second.
+## Taking simply the first one with room left is not round-robin: a cell holding
+## one spruce and four oaks would then wait for all ten oak variants.
+func _next_wanted() -> Vector2i:
 	var n := _wanted.size()
 	for i in n:
-		var species: int = _wanted[(_cursor + i) % n]
-		if _baked(species).size() < _wanted_count[species]:
+		var key: Vector2i = _wanted[(_cursor + i) % n]
+		if _baked(key).size() < _wanted_count[key]:
 			_cursor = (_cursor + i + 1) % n
-			return species as TreeSpecies
-	return TreeSpecies.NoSpecies
+			return key
+	return Vector2i(TreeSpecies.NoSpecies, TreeAge.Adult)
 
 
 ## Meshes still to bake, for a progress print.
 func baking() -> int:
 	var left := 0
-	for species in _wanted:
-		left += maxi(0, _wanted_count[species] - _baked(species).size())
+	for key in _wanted:
+		left += maxi(0, _wanted_count[key] - _baked(key).size())
 	return left
 
 
-## Asks for up to VARIANTS meshes of `species`, or as many as the plan calls for
-## if that is fewer -- variety is only worth baking for a species that actually
-## appears more than once. A plan can call for a fraction of a tree per cell, and
-## the floor of 1 still applies to it: without a mesh there is nothing to plant
-## the occasional tree with.
+## Asks for up to VARIANTS meshes of the plan's species and age, or as many as
+## the plan calls for if that is fewer -- variety is only worth baking for a
+## species that actually appears more than once. A plan can call for a fraction
+## of a tree per cell, and the floor of 1 still applies to it: without a mesh
+## there is nothing to plant the occasional tree with.
 func request_baking(plan: ForestSectionPlan) -> void:
 	var want := clampi(plan.count, 1, VARIANTS)
-	if _wanted_count.has(plan.species):
-		_wanted_count[plan.species] = maxi(int(_wanted_count[plan.species]), want)
+	var key := _key(plan.species, plan.age)
+	if _wanted_count.has(key):
+		_wanted_count[key] = maxi(int(_wanted_count[key]), want)
 		return
-	_wanted_count[plan.species] = want
-	_wanted.append(plan.species)
+	_wanted_count[key] = want
+	_wanted.append(key)
+
+
+## The key a species and an age are stored under, as one Vector2i so it can be a
+## dictionary key: the mesh of a sapling is not the mesh of the tree it grows
+## into, so the age is part of the key and not a detail of the species.
+static func _key(species: TreeSpecies, age: TreeAge) -> Vector2i:
+	return Vector2i(species, age)
 
 
 ## The forest type an OSM forest feature should grow as, from its leaf_type or
@@ -293,9 +353,17 @@ func _random_point_in(points: PackedVector2Array, rect: Rect2,
 	return Vector2.INF
 
 
-func _tree_transform(spot: Vector2, rng: RandomNumberGenerator) -> Transform3D:
+## How much a tree's baked size is scaled per instance. A young tree varies
+## more: the understory is full of saplings of every size, while the adults of
+## a stand are all roughly grown.
+const ADULT_SIZE_RANGE := Vector2(0.9, 1.1)
+const YOUNG_SIZE_RANGE := Vector2(0.7, 1.3)
+
+
+func _tree_transform(spot: Vector2, age: TreeAge, rng: RandomNumberGenerator) -> Transform3D:
 	var origin := Vector3(spot.x, _ground_height_at(spot.x, spot.y), spot.y)
-	var size := rng.randf_range(0.9, 1.1)
+	var limits := YOUNG_SIZE_RANGE if age == TreeAge.Young else ADULT_SIZE_RANGE
+	var size := rng.randf_range(limits.x, limits.y)
 	var rot := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * size)
 	return Transform3D(rot, origin)
 
@@ -316,12 +384,16 @@ static func polygon_area(points: PackedVector2Array) -> float:
 
 ## One MultiMeshInstance3D holding `transforms` instances of `mesh`, taken from the
 ## pool if there is one spare. See recycle().
-func _multimesh(mesh: ArrayMesh, transforms: Array) -> MultiMeshInstance3D:
+##
+## The node records its age, so a caller can tell an adult stand from the
+## understory planted with it without having to look at the mesh.
+func _multimesh(mesh: ArrayMesh, transforms: Array, age: TreeAge) -> MultiMeshInstance3D:
 	var instance := _take()
 	instance.multimesh.mesh = mesh
 	instance.multimesh.instance_count = transforms.size()
 	for i in transforms.size():
 		instance.multimesh.set_instance_transform(i, transforms[i])
+	instance.set_meta(AGE_META, age)
 	return instance
 
 
@@ -352,28 +424,31 @@ func recycle(nodes: Array) -> void:
 		_pool.append(node)
 
 
-func _baked(species: TreeSpecies) -> Array:
-	if not _meshes.has(species):
-		_meshes[species] = []
-	return _meshes[species]
+## The baked meshes of one species and age, in the order they were baked.
+func _baked(key: Vector2i) -> Array:
+	if not _meshes.has(key):
+		_meshes[key] = []
+	return _meshes[key]
 
 
-static func _preset(species: TreeSpecies) -> Callable:
+## The builder for one species and age: the adult tree, or the sapling of the
+## same species.
+static func _preset(species: TreeSpecies, age: TreeAge) -> Callable:
 	match species:
 		TreeSpecies.Oak:
-			return TreeGenPresets.oak
+			return TreeGenPresetsYoung.oak if age == TreeAge.Young else TreeGenPresetsAdult.oak
 		TreeSpecies.Spruce:
-			return TreeGenPresets.spruce
+			return TreeGenPresetsYoung.spruce if age == TreeAge.Young else TreeGenPresetsAdult.spruce
 		TreeSpecies.Maple:
-			return TreeGenPresets.maple
+			return TreeGenPresetsYoung.maple if age == TreeAge.Young else TreeGenPresetsAdult.maple
 		TreeSpecies.Aspen:
-			return TreeGenPresets.aspen
+			return TreeGenPresetsYoung.aspen if age == TreeAge.Young else TreeGenPresetsAdult.aspen
 		TreeSpecies.Birch:
-			return TreeGenPresets.birch
+			return TreeGenPresetsYoung.birch if age == TreeAge.Young else TreeGenPresetsAdult.birch
 		TreeSpecies.Pine:
-			return TreeGenPresets.pine
-	print("Warning: Attempted to access unsupported tree (", species, "), using TreeGenPresets.oak as default..")
-	return TreeGenPresets.oak
+			return TreeGenPresetsYoung.pine if age == TreeAge.Young else TreeGenPresetsAdult.pine
+	print("Warning: Attempted to access unsupported tree (", species, "), using TreeGenPresetsAdult.oak as default..")
+	return TreeGenPresetsAdult.oak
 
 
 

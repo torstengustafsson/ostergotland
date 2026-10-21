@@ -4,6 +4,12 @@ class_name ForestStreamer extends RefCounted
 ## there is woodland wherever the player walks rather than only where they
 ## started.
 ##
+## A cell holds two ages of tree, the adults and the young ones under them
+## (ForestGen.TreeAge). Both are streamed: the generator grows both from the
+## same outline and the cell waits for both sets of meshes before it is planted,
+## so a stand never arrives as a bare canopy with the understory trailing in
+## behind it.
+##
 ## The unit is a **cell**, not a forest. A stand in this data is up to 31 ha, so
 ## planting one per stand means walking toward it and seeing nothing until its far
 ## edge comes within range and the whole thing arrives at once, including the parts
@@ -181,15 +187,25 @@ func _unplant(key: Vector2i) -> void:
 
 
 ## What is planted, what is waiting and how many trees that is, for debugging.
+## The trees are counted per age, so a stand that lost its understory shows up
+## here as adults without young ones.
 func stats() -> Dictionary:
-	var trees := 0
+	var adults := 0
+	var young := 0
 	for nodes in _live.values():
 		for node in nodes:
-			trees += node.multimesh.instance_count
+			var count: int = node.multimesh.instance_count
+			if int(node.get_meta(ForestGen.AGE_META, ForestGen.TreeAge.Adult)) \
+					== ForestGen.TreeAge.Young:
+				young += count
+			else:
+				adults += count
 	return {
 		"cells_live": _live.size(),
 		"cells_pending": _pending.size(),
-		"trees": trees,
+		"trees": adults + young,
+		"trees_adult": adults,
+		"trees_young": young,
 		"meshes_to_bake": generator.baking(),
 		"radius": RADIUS,
 		"cell": CELL,
