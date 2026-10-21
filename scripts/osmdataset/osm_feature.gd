@@ -65,6 +65,15 @@ func is_area() -> bool:
 	return is_closed()
 
 
+## Whether this feature is a hole in the shape its relation describes, i.e. an
+## `inner` ring of a multipolygon. What that means differs by group: the inner
+## ring of a lake is an island and its interior is land, the inner ring of a
+## forest is a clearing and its interior is not forest, so the feature that
+## knows what it is has to say what it means.
+func is_hole() -> bool:
+	return way != null and way.is_hole()
+
+
 ## Width of the way in metres, for the features the ground shader strokes as lines.
 ## 0.0 (the default) means "not a line", either because the feature is an area or
 ## because the kind of way has no width on the ground. The way's own `width` tag

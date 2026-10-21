@@ -248,13 +248,15 @@ func _reversed(nd: Array[String]) -> Array[String]:
 ## One stitched chain as a closed OsmWay carrying the relation's tags. Closed by
 ## repeating the first node at the end, which is what OsmWay.is_closed() and the
 ## shader's crossing test both want. The id says which relation and ring this is, so
-## a feature is traceable back to its source.
+## a feature is traceable back to its source, and the role says whether it is the
+## shape or a hole in it (OsmWay.is_hole()).
 func _ring_way(chain: Array[String], rel_tags: Dictionary, relation_id: String,
 		role: String, index: int, out: Array[OsmWay]) -> void:
 	if chain.size() < 3:
 		return
 	var way := OsmWay.new()
 	way.id = "relation:%s:%s:%d" % [relation_id, role, index]
+	way.role = role
 	way.nd = chain.duplicate()
 	if way.nd[0] != way.nd[way.nd.size() - 1]:
 		way.nd.append(way.nd[0])

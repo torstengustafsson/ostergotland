@@ -19,6 +19,12 @@ class_name ForestStreamer extends RefCounted
 ## it. A cell is also seeded on its own key, so a tree never moves because a
 ## neighbour streamed in or out.
 ##
+## The cell is also what the trees are kept apart by. ForestCell gathers the
+## roads, the railways, the water, the buildings and the fields on the cell's
+## ground and keeps the trees off them, and it holds the trees already planted
+## so that no two trunks grow into each other -- including across a cell
+## boundary, which the cell's own margin arranges (ForestCell.BORDER_MARGIN_M).
+##
 ## This is the same shape as OsmGroundData: bind() once, then update() every frame
 ## with the player's position. Which cells are in range is throttled by how far the
 ## focus has moved; the growing is not, because it has to be able to finish while
@@ -58,12 +64,21 @@ const WORK_BUDGET_MS := 6.0
 ## Index group the forests come from; OsmForestArea.feature_name().
 const GROUP := "forests"
 
+## What one cell is made of: the ground it covers, with the things on it
+## gathered, and the part of each forest that falls inside it.
+class CellPlan extends RefCounted:
+	var cell: ForestCell = null
+	var regions: Array[ForestRegion] = []
+
 ## Where the trees go.
 var generator: ForestGen = null
 ## Where the forests come from, and through it the projection.
 var index: OsmQuadtree = null
 ## cell key -> the nodes planted for it, so it can be taken away again.
 var _live: Dictionary = {}
+## cell key -> its CellPlan, so the clipping is done once per cell rather than
+## once per frame.
+var _plans: Dictionary[Vector2i, CellPlan] = {}
 ## Cells in range that have not been planted yet, nearest first.
 var _pending: Array[Vector2i] = []
 var _focus := Vector3.ZERO
@@ -77,6 +92,7 @@ func bind(p_generator: ForestGen, p_index: OsmQuadtree) -> void:
 	generator = p_generator
 	index = p_index
 	_live.clear()
+	_plans.clear()
 	_pending.clear()
 	_packed = false
 
@@ -105,6 +121,9 @@ func _repack() -> void:
 	for key in _live.keys():
 		if not wanted.has(key):
 			_unplant(key)
+	for key in _plans.keys():
+		if not wanted.has(key):
+			_plans.erase(key)
 	for key in wanted:
 		if not _live.has(key) and not _pending.has(key):
 			_pending.append(key)
@@ -146,28 +165,58 @@ func _work() -> void:
 	# where the real per-frame cost is.
 	while not _pending.is_empty():
 		var key: Vector2i = _pending[0]
-		var features: Array[OsmFeature] = index.query_rect(
-				_cell_rect(key), GROUP, true)
-		var area := _cell_rect(key).get_area()
+		var plan := _plan_for(key)
 		var ready := true
-		for feature in features:
-			if not generator.needs_ready(ForestGen.type_for(feature), area):
+		for region in plan.regions:
+			if not generator.needs_ready(ForestGen.type_for(region.feature),
+					region.forest_area):
 				ready = false
 		if not ready:
 			break
 		_pending.pop_front()
-		_live[key] = _plant(key, features)
+		_live[key] = _plant(key, plan)
 		if Time.get_ticks_usec() - started >= deadline:
 			break
 
 
-func _plant(key: Vector2i, features: Array[OsmFeature]) -> Array[MultiMeshInstance3D]:
-	var nodes: Array[MultiMeshInstance3D] = []
+## What is in a cell: its ground, with the things on it gathered, and the part
+## of each forest that falls inside it.
+##
+## Cached, because it is the same for as long as the cell is in range and the
+## clipping is the expensive half -- it is done once per cell rather than once
+## per frame.
+##
+## **A hole in a forest is not forest.** A multipolygon relation is stitched
+## into one way per ring, and the rings that are holes come out as forests of
+## their own with the relation's tags, so the clearing in the middle of a wood
+## would be planted with the wood. The ground shader gets this right by
+## itself, because the forest floor is one parity count over every forest edge
+## and a hole crosses it twice; the trees have to be told.
+func _plan_for(key: Vector2i) -> CellPlan:
+	if _plans.has(key):
+		return _plans[key]
 	var rect := _cell_rect(key)
-	for feature in features:
-		nodes.append_array(generator.plant_forest_in_rect(
-				ForestGen.type_for(feature), index.entry_points(feature), rect,
-				_seed_for(key, feature)))
+	var plan := CellPlan.new()
+	plan.cell = ForestCell.new(rect)
+	plan.cell.gather(index)
+	for feature in index.query_rect(rect, GROUP, true):
+		if feature.is_hole():
+			continue
+		var outline := index.entry_points(feature)
+		if outline.size() < 3:
+			continue
+		plan.regions.append(ForestRegion.clip(feature, outline, rect,
+				ForestCell.plant_rect(rect)))
+	_plans[key] = plan
+	return plan
+
+
+func _plant(key: Vector2i, plan: CellPlan) -> Array[MultiMeshInstance3D]:
+	var nodes: Array[MultiMeshInstance3D] = []
+	for region in plan.regions:
+		nodes.append_array(generator.plant_region(
+				ForestGen.type_for(region.feature), region,
+				_seed_for(key, region.feature), plan.cell))
 	return nodes
 
 
@@ -180,9 +229,11 @@ func _seed_for(key: Vector2i, feature: OsmFeature) -> int:
 
 ## Drops a cell's trees. The nodes go back to ForestGen's pool rather than being
 ## freed, since a cell leaving the radius is usually one that will come back.
+## The plan goes with them: the cell is clipped again when it comes back.
 func _unplant(key: Vector2i) -> void:
 	var nodes: Array = _live[key]
 	_live.erase(key)
+	_plans.erase(key)
 	generator.recycle(nodes)
 
 

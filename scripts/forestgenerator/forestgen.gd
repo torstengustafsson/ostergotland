@@ -9,10 +9,16 @@ class_name ForestGen extends Node3D
 ## tree every ~32 m, which reads as woodland from a distance without being a
 ## forest.
 ##
-## The unit of planting is a *rectangle*, not a forest: plant_forest_in_rect()
-## grows only the part of an outline that falls inside the rectangle it is given.
-## That is what lets a 31 ha stand appear as the player walks into it instead of
-## arriving whole the moment its far edge comes within range.
+## The unit of planting is a *cell*, not a forest: plant_region() grows only the
+## part of an outline that falls inside the cell it is given, clipped and
+## measured (ForestRegion). That is what lets a 31 ha stand appear as the player
+## walks into it instead of arriving whole the moment its far edge comes within
+## range.
+##
+## Where a tree may stand is the cell's business, not this one's: ForestCell
+## holds the roads, the buildings and the water on the ground, and the trees
+## already planted, so that no two trunks grow into each other and none of them
+## stands in a road.
 ##
 ## The tree meshes are procedural and baked lazily, because that is the whole
 ## cost: baking one oak is ~30 ms against ~2 ms to place a tree. Baking is
@@ -128,9 +134,10 @@ const LOD_BARK_RINGS := 8
 const LOD_LEAF_DENSITY := 0.12
 const LOD_MIN_LEAVES := 3
 
-## Tries this many random spots per tree before leaving it out, so a tree with
-## nowhere to go is dropped rather than piled on the origin.
-const MAX_PLACEMENT_TRIES := 32
+## How many spots are drawn for one tree, and the best of them taken. One draw
+## lands where it lands, and a stand of them comes out in patches; taking the
+## best of a batch spreads them out instead, at the cost of a few more draws.
+const CANDIDATES := 12
 
 ## Spare nodes kept for reuse, capped so that walking through one enormous stand
 ## does not leave hundreds of nodes parked for the rest of the session.
@@ -167,29 +174,35 @@ var _cursor := 0
 var _ground_ray := PhysicsRayQueryParameters3D.create(Vector3.ZERO, Vector3.UP)
 
 
-## Grows the part of one forest that falls inside `rect`, as one
+## Grows the part of one forest that falls inside one streaming cell, as one
 ## MultiMeshInstance3D per baked variant the trees land on.
+##
+## `region` is the forest's share of the cell (ForestRegion): where the trees
+## may stand and how much forest there is to spread them over. `cell` is the
+## cell they are planted in (ForestCell): what is on its ground, and the trees
+## already standing in it.
 ##
 ## Both ages are grown: the adults at the stand's own density and the young
 ## ones at theirs, each from its own meshes, so a stand comes up with an
 ## understory under its canopy rather than with only the canopy.
 ##
-## `seed_value` is what makes this safe to re-enter: the same rectangle of the same
+## `seed_value` is what makes this safe to re-enter: the same cell of the same
 ## forest gives the same trees every time, so a tree never moves because a
 ## neighbour streamed in or out. It should come from the feature and the cell
 ## (ForestStreamer hashes the way id with the cell key).
 ##
-## Trees are placed by trying to fill `rect` to the density and letting the outline
-## reject the ones that fall outside it, so a cell that the forest only clips the
-## corner of gets fewer trees rather than a full cell's worth pushed up against
-## the edge.
-func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Rect2,
-		seed_value: int) -> Array[MultiMeshInstance3D]:
+## The count of trees comes from the forest's area in the cell, not from the
+## cell's area: a cell that only clips the corner of a wood gets that corner's
+## worth of trees and no more. Getting this wrong is what used to grow one
+## trunk through another -- the corner was given a whole cell's worth of trees
+## to stand in.
+func plant_region(type: ForestType, region: ForestRegion, seed_value: int,
+		cell: ForestCell) -> Array[MultiMeshInstance3D]:
 	var added: Array[MultiMeshInstance3D] = []
-	if points.size() < 3 or rect.get_area() <= 0.0:
+	if region.polygons.is_empty() or region.forest_area <= 0.0:
 		return added
-	var plan := _plan(type, rect.get_area())
-	if plan.is_empty() or not needs_ready(type, rect.get_area()):
+	var plan := _plan(type, region.forest_area)
+	if plan.is_empty() or not needs_ready(type, region.forest_area):
 		return added
 
 	var rng := RandomNumberGenerator.new()
@@ -197,8 +210,9 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 	for entry in plan:
 		var transforms: Array = []
 		for _i in entry.count + _extra(entry.remainder, rng):
-			var spot := _random_point_in(points, rect, rng)
+			var spot := _pick_spot(region, cell, rng)
 			if spot != Vector2.INF:
+				cell.add_tree(spot)
 				transforms.append(_tree_transform(spot, entry.age, rng))
 		if transforms.is_empty():
 			continue
@@ -218,8 +232,8 @@ func plant_forest_in_rect(type: ForestType, points: PackedVector2Array, rect: Re
 
 
 ## Queues the meshes a stand of `type` covering `area` m2 would need and returns
-## whether they are all there, i.e. whether plant_forest_in_rect() would now grow
-## it. Cheap: nothing is grown and no raycast is cast.
+## whether they are all there, i.e. whether plant_region() would now grow it.
+## Cheap: nothing is grown and no raycast is cast.
 ##
 ## It waits for all of a stand's meshes rather than just the first. Otherwise the
 ## stand in front of the player is planted two frames in, when one variant exists,
@@ -340,17 +354,31 @@ static func type_for(feature: OsmFeature) -> ForestType:
 	return ForestType.LeafyForest
 
 
-## A random point (x, z) inside the polygon and inside `rect`, or Vector2.INF when
-## MAX_PLACEMENT_TRIES random spots in `rect` all missed. The polygon is what
-## rejects the sample, so a cell the forest only partly covers gets fewer trees.
-func _random_point_in(points: PackedVector2Array, rect: Rect2,
+## The spot for one tree: the best of a batch of candidates, each scored by how
+## far it is from the nearest tree already planted in the cell.
+##
+## A candidate that would break the trunk gap, or that stands on a road or in
+## a lake, is not a candidate at all -- the cell answers that -- so the batch
+## is only ever made of spots a tree could stand in.
+##
+## The best of several is what keeps a stand from clumping. Without it the
+## trees are a plain random walk, and a wood comes out in patches with bare
+## ground between them rather than evenly spread.
+func _pick_spot(region: ForestRegion, cell: ForestCell,
 		rng: RandomNumberGenerator) -> Vector2:
-	for _try in MAX_PLACEMENT_TRIES:
-		var spot := Vector2(rng.randf_range(rect.position.x, rect.end.x),
-				rng.randf_range(rect.position.y, rect.end.y))
-		if Geometry2D.is_point_in_polygon(spot, points):
-			return spot
-	return Vector2.INF
+	var best := Vector2.INF
+	var best_score := -1.0
+	for _candidate in CANDIDATES:
+		var spot := region.sample(rng)
+		if spot == Vector2.INF:
+			continue
+		if not cell.can_plant(spot):
+			continue
+		var score := cell.nearest_tree_distance(spot)
+		if score > best_score:
+			best_score = score
+			best = spot
+	return best
 
 
 ## How much a tree's baked size is scaled per instance. A young tree varies
@@ -366,20 +394,6 @@ func _tree_transform(spot: Vector2, age: TreeAge, rng: RandomNumberGenerator) ->
 	var size := rng.randf_range(limits.x, limits.y)
 	var rot := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * size)
 	return Transform3D(rot, origin)
-
-
-## Area of a world-XZ polygon, 0 when it has no usable geometry. Godot 4 dropped
-## Geometry2D.compute_polygon_area(), so this is the shoelace formula by hand; the
-## last point is joined to the first, so a duplicated closing vertex is fine.
-static func polygon_area(points: PackedVector2Array) -> float:
-	if points.size() < 3:
-		return 0.0
-	var twice_area := 0.0
-	for i in points.size():
-		var a := points[i]
-		var b := points[(i + 1) % points.size()]
-		twice_area += a.x * b.y - b.x * a.y
-	return absf(twice_area) * 0.5
 
 
 ## One MultiMeshInstance3D holding `transforms` instances of `mesh`, taken from the

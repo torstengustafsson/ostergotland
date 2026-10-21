@@ -1,0 +1,212 @@
+class_name ForestCell
+extends RefCounted
+
+## One streaming cell's ground: the things on it that a tree may not stand on,
+## and the trees that already stand in it.
+##
+## Both are per cell rather than per forest, and that is the point. A cell is
+## what streams, so it is what is asked the question, and two forests that
+## overlap in the same cell have to share one answer about where a tree may go
+## -- otherwise they grow into each other.
+##
+## The cell also owns the **margin**. A tree may not stand closer than half the
+## trunk gap to the cell's own edge, and that is what makes the gap hold across
+## a cell boundary: the two cells never have to know about each other, because
+## each tree keeps half a gap from the edge they share.
+
+## The smallest distance between two trunks, in metres. The widest trunk is a
+## pine's: 0.7 m at the base, one and a bit again at its widest, and an
+## instance is scaled up to 1.1 -- so 0.83 m of trunk, and two of them have to
+## stand 1.66 m apart not to grow into each other. 1.7 m leaves a little air.
+const MIN_TRUNK_GAP_M := 1.7
+
+## How far inside its own cell a tree has to stand, in metres: half the gap,
+## plus a cushion. Two trees in neighbouring cells are then a whole gap apart,
+## because each of them keeps half a gap from the edge they share -- and a
+## little more than that, so the guarantee does not rest on the last bit of a
+## float: at exactly half a gap the two trees would be 1.7 m apart to within
+## rounding, and the check for the gap is a strict one.
+const BORDER_MARGIN_M := MIN_TRUNK_GAP_M * 0.5 + 0.05
+
+## How close to a road, a railway, a watercourse, a lake, a building or a field
+## a tree may stand, in metres. A tree on the tarmac is a tree in the road.
+const CLEARANCE_M := 1.0
+
+## How far beyond the cell the blockers are gathered from, in metres. It has to
+## be more than half the widest way plus the clearance, or a wide road whose
+## tarmac reaches into the cell would not be gathered and the trees standing
+## on it would not know. The widest way in this extract is 40 m wide, so half
+## of it plus the clearance is 21.
+const GATHER_MARGIN_M := 24.0
+
+## Side of one bucket of the tree grid, in metres. It has to be bigger than
+## the trunk gap, so that every tree close enough to matter is in the nine
+## buckets around a spot.
+const BUCKET_M := 8.0
+
+## The groups whose features a tree may not stand on. The water group holds
+## both kinds: a lake is an area and a stream is a line of a width.
+const BLOCKER_GROUPS: Array[String] = [
+	"roads", "railways", "water", "buildings", "cover",
+]
+
+## The distance reported when there is no tree near at all. It only has to be
+## bigger than any real distance, and the cell is 32 m across.
+const NO_TREE := 1.0e9
+
+## A thing on the ground a tree may not stand on. A line has a width and is
+## kept off by that width plus the clearance; an area has none and is simply
+## not to be stood in.
+class Blocker extends RefCounted:
+	var points: PackedVector2Array = PackedVector2Array()
+	var half_width := 0.0
+	var is_area := false
+	var box := Rect2()
+
+	func _init(p_points: PackedVector2Array, p_is_area: bool, p_half_width: float) -> void:
+		points = p_points
+		is_area = p_is_area
+		half_width = p_half_width
+		box = _box_of(p_points)
+
+	static func _box_of(p_points: PackedVector2Array) -> Rect2:
+		var p_box := Rect2(p_points[0], Vector2.ZERO)
+		for p in p_points:
+			p_box = p_box.expand(p)
+		return p_box
+
+
+## The cell's rectangle, and the part of it a tree may stand in.
+var _rect := Rect2()
+var _plant_rect := Rect2()
+## The things on the ground, split by kind: a line has a width, an area has
+## none.
+var _lines: Array[Blocker] = []
+var _areas: Array[Blocker] = []
+## The trees planted in the cell, in buckets of BUCKET_M: bucket -> the trees
+## in it. One grid for the whole cell, so two forests in it keep away from
+## each other.
+var _trees: Dictionary = {}
+
+
+func _init(p_rect: Rect2) -> void:
+	_rect = p_rect
+	_plant_rect = plant_rect(p_rect)
+
+
+## The part of a cell a tree may stand in: the cell with a margin taken off
+## every side.
+static func plant_rect(rect: Rect2) -> Rect2:
+	return rect.grow(-BORDER_MARGIN_M)
+
+
+## Gathers the things on the ground around the cell that a tree may not stand
+## on: the roads, the railways, the water (a lake as an area, a stream as a
+## line), the buildings and the ground cover.
+##
+## Once per cell. The answer is the same for every forest in the cell, and
+## gathering it per forest would gather it several times over.
+func gather(index: OsmQuadtree) -> void:
+	var rect := _rect.grow(GATHER_MARGIN_M)
+	for group in BLOCKER_GROUPS:
+		for feature in index.query_rect(rect, group, true):
+			_add_blocker(index, feature)
+
+
+## Whether a tree may stand at `spot`: inside the cell's margin, clear of
+## everything on the ground, and a trunk gap away from every tree already
+## planted in the cell.
+func can_plant(spot: Vector2) -> bool:
+	if not _plant_rect.has_point(spot):
+		return false
+	if nearest_tree_distance(spot) < MIN_TRUNK_GAP_M:
+		return false
+	for blocker in _lines:
+		if _line_blocks(blocker, spot):
+			return false
+	for blocker in _areas:
+		if _area_blocks(blocker, spot):
+			return false
+	return true
+
+
+## The distance to the nearest tree already planted in the cell, or NO_TREE
+## when there is none near. The grid is in buckets, so every tree that can be
+## closer than the gap is in the nine buckets around the spot.
+func nearest_tree_distance(spot: Vector2) -> float:
+	var bucket := _bucket_of(spot)
+	var best := NO_TREE
+	for dz in range(-1, 2):
+		for dx in range(-1, 2):
+			var trees: PackedVector2Array = _trees.get(
+					Vector2i(bucket.x + dx, bucket.y + dz), PackedVector2Array())
+			for tree in trees:
+				best = minf(best, spot.distance_to(tree))
+	return best
+
+
+## Records a tree planted in the cell, so the next one keeps its distance.
+func add_tree(spot: Vector2) -> void:
+	var bucket := _bucket_of(spot)
+	var trees: PackedVector2Array = _trees.get(bucket, PackedVector2Array())
+	trees.append(spot)
+	_trees[bucket] = trees
+
+
+## Whether a line blocker reaches `spot`: the line's own width plus the
+## clearance, measured to the line itself.
+static func _line_blocks(blocker: Blocker, spot: Vector2) -> bool:
+	var reach := blocker.half_width + CLEARANCE_M
+	if not blocker.box.grow(reach).has_point(spot):
+		return false
+	return _distance_to_polyline(spot, blocker.points) < reach
+
+
+## Whether an area blocker reaches `spot`: inside it, or within the clearance
+## of its edge.
+static func _area_blocks(blocker: Blocker, spot: Vector2) -> bool:
+	if not blocker.box.grow(CLEARANCE_M).has_point(spot):
+		return false
+	if Geometry2D.is_point_in_polygon(spot, blocker.points):
+		return true
+	return _distance_to_polyline(spot, blocker.points) < CLEARANCE_M
+
+
+## Adds one feature to the blockers: an area if it covers the ground inside
+## its ring, a line of a width if it does not.
+##
+## A feature with no width is not on the ground yet -- a proposed road, a
+## stream of an unknown class -- and there is nothing to keep the trees off.
+func _add_blocker(index: OsmQuadtree, feature: OsmFeature) -> void:
+	var points := index.entry_points(feature)
+	if feature.is_area():
+		if points.size() < 3:
+			return
+		_areas.append(Blocker.new(points, true, 0.0))
+		return
+	if points.size() < 2:
+		return
+	var width := feature.width_m()
+	if width <= 0.0:
+		return
+	_lines.append(Blocker.new(points, false, width * 0.5))
+
+
+static func _distance_to_polyline(p: Vector2, points: PackedVector2Array) -> float:
+	var best := INF
+	for i in points.size() - 1:
+		best = minf(best, _distance_to_segment(p, points[i], points[i + 1]))
+	return best
+
+
+static func _distance_to_segment(p: Vector2, a: Vector2, b: Vector2) -> float:
+	var ab := b - a
+	var length_squared := ab.length_squared()
+	if length_squared <= 0.0:
+		return p.distance_to(a)
+	var t := clampf((p - a).dot(ab) / length_squared, 0.0, 1.0)
+	return p.distance_to(a + ab * t)
+
+
+static func _bucket_of(spot: Vector2) -> Vector2i:
+	return Vector2i(floori(spot.x / BUCKET_M), floori(spot.y / BUCKET_M))
