@@ -243,20 +243,24 @@ func _unplant(key: Vector2i) -> void:
 func stats() -> Dictionary:
 	var adults := 0
 	var young := 0
+	var undergrowth := 0
 	for nodes in _live.values():
 		for node in nodes:
 			var count: int = node.multimesh.instance_count
-			if int(node.get_meta(ForestGen.AGE_META, ForestGen.TreeAge.Adult)) \
-					== ForestGen.TreeAge.Young:
+			var age_val := int(node.get_meta(ForestGen.TREETYPE_META, ForestGen.TreeType.Adult))
+			if age_val == ForestGen.TreeType.Young:
 				young += count
+			elif age_val == ForestGen.TreeType.Undergrowth:
+				undergrowth += count
 			else:
 				adults += count
 	return {
 		"cells_live": _live.size(),
 		"cells_pending": _pending.size(),
-		"trees": adults + young,
+		"trees": adults + young + undergrowth,
 		"trees_adult": adults,
 		"trees_young": young,
+		"trees_undergrowth": undergrowth,
 		"meshes_to_bake": generator.baking(),
 		"radius": RADIUS,
 		"cell": CELL,
