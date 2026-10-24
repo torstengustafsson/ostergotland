@@ -1,11 +1,28 @@
 class_name TreeGenMaterialLibrary
-## Caches and builds the two StandardMaterial3Ds used by TreeGenMesh:
+## Caches and builds the two materials used by TreeGenMesh:
 ## - bark: albedo is the tree's bark texture (or a plain color as fallback)
 ## - leaves: alpha-cutout, double-sided, vertex-colored, with either the leaf
-##   set's own texture or a procedural leaf shape.
+##   set's own texture or a procedural leaf shape. A ShaderMaterial rather than
+##   a StandardMaterial3D, because only a shader can tint a back face.
 
 const DEFAULT_LEAF_TEXTURE_SIZE := 64
 const LEAF_ALPHA_CUTOFF := 0.4
+
+## What the pale side of every leaf is tinted with: the underside of a fern
+## pinna, and the side a grass blade leans toward -- tree leaves share the
+## material and the same treatment. The meshes hold no per-side colour: each
+## strip is one double-sided quad carrying a single up-tilted normal, and the
+## engine flips that normal for the back face, so the front face is the one
+## lit by the up-tilted normal and the back face is the dark one. That is
+## backwards from a real leaf, and it is what puts a pale green under the
+## ferns. Measured on the scene's own sky, the front face comes out 2.1-3.9x
+## the brightness of the back and takes the sky's blue; on one pinna, its
+## underside renders (72, 123, 72) against its top's (38, 57, 21). This is the
+## knob for it: a tint over the pale face only, and white leaves the lighting
+## exactly as it was.
+const UNDERSIDE_TINT := Color(0.6, 0.6, 0.6)
+
+const LEAF_SHADER := preload("res://scripts/treegenerator/leaf.gdshader")
 
 static var bark_material_cache: Dictionary = {}
 static var leaf_material_cache: Dictionary = {}
@@ -27,18 +44,19 @@ static func bark_material(texture: Texture2D, fallback_color: Color) -> Standard
 	return material
 
 
-static func leaf_material(texture: Texture2D) -> StandardMaterial3D:
+## The leaf material, one per texture (or per colour key when there is none).
+## The alpha cutoff is a literal in leaf.gdshader, since a shader uniform would
+## be one more thing to keep in step by hand for no gain.
+static func leaf_material(texture: Texture2D) -> ShaderMaterial:
 	var cache_key := _texture_key(texture, Color.WHITE)
 	if leaf_material_cache.has(cache_key):
 		return leaf_material_cache[cache_key]
 
-	var material := StandardMaterial3D.new()
-	material.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA_SCISSOR
-	material.alpha_scissor_threshold = LEAF_ALPHA_CUTOFF
-	material.cull_mode = BaseMaterial3D.CULL_DISABLED
-	material.vertex_color_use_as_albedo = true
-	material.roughness = 1.0
-	material.albedo_texture = texture if texture != null else procedural_leaf_texture(2)
+	var material := ShaderMaterial.new()
+	material.shader = LEAF_SHADER
+	material.set_shader_parameter("albedo_tex",
+			texture if texture != null else procedural_leaf_texture(2))
+	material.set_shader_parameter("underside_tint", UNDERSIDE_TINT)
 	leaf_material_cache[cache_key] = material
 	return material
 

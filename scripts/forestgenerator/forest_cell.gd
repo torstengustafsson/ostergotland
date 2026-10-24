@@ -13,12 +13,28 @@ extends RefCounted
 ## trunk gap to the cell's own edge, and that is what makes the gap hold across
 ## a cell boundary: the two cells never have to know about each other, because
 ## each tree keeps half a gap from the edge they share.
+##
+## The undergrowth planted with a stand is a third thing: kept apart by its own
+## patch gap (MIN_UNDERGROWTH_GAP_M) in a grid of its own, since it has no
+## trunks to grow into and grows at a tree's foot. It is also the one plant
+## allowed to stand in the margin band along a cell's edge -- trees keep out of
+## it to hold the trunk gap, but a band of ground with no grass in it is a bare
+## lane down every cell boundary.
 
 ## The smallest distance between two trunks, in metres. The widest trunk is a
 ## pine's: 0.7 m at the base, one and a bit again at its widest, and an
 ## instance is scaled up to 1.1 -- so 0.83 m of trunk, and two of them have to
 ## stand 1.66 m apart not to grow into each other. 1.7 m leaves a little air.
 const MIN_TRUNK_GAP_M := 1.7
+
+## How far apart two patches of undergrowth are kept, in metres. Grass has no
+## trunks to grow into each other, and a patch at a tree's foot is where grass
+## grows, so undergrowth answers to this and not to the trunk gap -- holding
+## every tuft 1.7 m from every other is what made a wood's floor a sparse
+## lattice of tufts rather than dense grass. This is patch spacing, not a
+## no-overlap rule: patches are meant to crowd and overlap, so it is kept near
+## TreeGenPresetsUndergrowth.PATCH_RADIUS_M, which is what one patch covers.
+const MIN_UNDERGROWTH_GAP_M := 0.35
 
 ## How far inside its own cell a tree has to stand, in metres: half the gap,
 ## plus a cushion. Two trees in neighbouring cells are then a whole gap apart,
@@ -50,9 +66,10 @@ const BLOCKER_GROUPS: Array[String] = [
 	"roads", "railways", "water", "buildings", "cover",
 ]
 
-## The distance reported when there is no tree near at all. It only has to be
-## bigger than any real distance, and the cell is 32 m across.
-const NO_TREE := 1.0e9
+## The distance reported when no plant of the kind asked about stands near at
+## all. It only has to be bigger than any real distance, and the cell is 32 m
+## across.
+const NO_PLANT := 1.0e9
 
 ## A thing on the ground a tree may not stand on. A line has a width and is
 ## kept off by that width plus the clearance; an area has none and is simply
@@ -87,6 +104,10 @@ var _areas: Array[Blocker] = []
 ## in it. One grid for the whole cell, so two forests in it keep away from
 ## each other.
 var _trees: Dictionary = {}
+## The undergrowth planted in the cell, in buckets of BUCKET_M, apart from the
+## trees' grid on purpose: a patch of grass is not a trunk, so it keeps its
+## distance from other grass only and grows right up to a tree.
+var _undergrowth: Dictionary = {}
 
 
 func _init(p_rect: Rect2) -> void:
@@ -115,11 +136,36 @@ func gather(index: OsmQuadtree) -> void:
 
 ## Whether a tree may stand at `spot`: inside the cell's margin, clear of
 ## everything on the ground, and a trunk gap away from every tree already
-## planted in the cell.
+## planted in the cell. The margin is what makes the trunk gap hold across a
+## cell boundary, so it is a rule and not something the region is cut by --
+## see ForestRegion.clip().
 func can_plant(spot: Vector2) -> bool:
-	if not _plant_rect.has_point(spot):
+	if not _clear_of_ground(spot, _plant_rect):
 		return false
-	if nearest_tree_distance(spot) < MIN_TRUNK_GAP_M:
+	return nearest_tree_distance(spot) >= MIN_TRUNK_GAP_M
+
+
+## Whether a patch of undergrowth may stand at `spot`: the same ground rules as
+## a tree, but the **whole cell rather than the margin**, and kept a patch gap
+## away from the undergrowth only -- not a trunk gap, because grass grows at a
+## tree's foot.
+##
+## The whole cell is the point: the margin band along a cell edge is a tenth of
+## the ground, and grass that stood clear of it would leave a bare lane down
+## every cell boundary, visible from above as a grid of squares. Overlapping
+## patches across a boundary are harmless -- two patches of grass do not grow
+## into each other.
+func can_plant_undergrowth(spot: Vector2) -> bool:
+	if not _clear_of_ground(spot, _rect):
+		return false
+	return nearest_undergrowth_distance(spot) >= MIN_UNDERGROWTH_GAP_M
+
+
+## The part of the rules that every kind of plant answers to: inside `rect` --
+## the cell or the cell's margin, depending on the plant -- and clear of
+## everything lying on the ground.
+func _clear_of_ground(spot: Vector2, rect: Rect2) -> bool:
+	if not rect.has_point(spot):
 		return false
 	for blocker in _lines:
 		if _line_blocks(blocker, spot):
@@ -130,27 +176,48 @@ func can_plant(spot: Vector2) -> bool:
 	return true
 
 
-## The distance to the nearest tree already planted in the cell, or NO_TREE
+## The distance to the nearest tree already planted in the cell, or NO_PLANT
 ## when there is none near. The grid is in buckets, so every tree that can be
 ## closer than the gap is in the nine buckets around the spot.
 func nearest_tree_distance(spot: Vector2) -> float:
+	return _nearest_distance(_trees, spot)
+
+
+## The distance to the nearest patch of undergrowth, or NO_PLANT when there is
+## none near. Same bucketed grid as the trees'; the gap it is measured against
+## is MIN_UNDERGROWTH_GAP_M, which is smaller than a bucket.
+func nearest_undergrowth_distance(spot: Vector2) -> float:
+	return _nearest_distance(_undergrowth, spot)
+
+
+func _nearest_distance(grid: Dictionary, spot: Vector2) -> float:
 	var bucket := _bucket_of(spot)
-	var best := NO_TREE
+	var best := NO_PLANT
 	for dz in range(-1, 2):
 		for dx in range(-1, 2):
-			var trees: PackedVector2Array = _trees.get(
+			var plants: PackedVector2Array = grid.get(
 					Vector2i(bucket.x + dx, bucket.y + dz), PackedVector2Array())
-			for tree in trees:
-				best = minf(best, spot.distance_to(tree))
+			for plant in plants:
+				best = minf(best, spot.distance_to(plant))
 	return best
 
 
 ## Records a tree planted in the cell, so the next one keeps its distance.
 func add_tree(spot: Vector2) -> void:
+	_record_plant(_trees, spot)
+
+
+## Records a patch of undergrowth, so the next one keeps its distance -- from
+## this and not from the trees'.
+func add_undergrowth(spot: Vector2) -> void:
+	_record_plant(_undergrowth, spot)
+
+
+func _record_plant(grid: Dictionary, spot: Vector2) -> void:
 	var bucket := _bucket_of(spot)
-	var trees: PackedVector2Array = _trees.get(bucket, PackedVector2Array())
-	trees.append(spot)
-	_trees[bucket] = trees
+	var plants: PackedVector2Array = grid.get(bucket, PackedVector2Array())
+	plants.append(spot)
+	grid[bucket] = plants
 
 
 ## Whether a line blocker reaches `spot`: the line's own width plus the

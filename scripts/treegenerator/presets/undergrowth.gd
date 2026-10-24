@@ -1,16 +1,17 @@
 class_name TreeGenPresetsUndergrowth
 extends RefCounted
 
-## Procedurally generated undergrowth: a tuft of tall grass and a fern.
+## Procedurally generated undergrowth: a patch of tall grass and a fern.
 ##
 ## Both are built directly into a SurfaceTool rather than through TreeGenTree. A
-## tuft has no trunk to grow and a fern is a fan of fronds, not a branching
-## skeleton, so the tree generator would contribute little but its bookkeeping.
+## patch of grass has no trunk to grow and a fern is a fan of fronds, not a
+## branching skeleton, so the tree generator would contribute little but its
+## bookkeeping.
 ## What the two do share with the trees is the leaf material, which is what puts
 ## them in the same light and behind the same alpha cutout.
 ##
 ## ForestGen bakes one mesh per variant and instances it, so the geometry here is
-## paid for at bake time only and each tuft can spend a few hundred triangles on
+## paid for at bake time only and each patch can spend a few hundred triangles on
 ## looking like a plant rather than like a billboard.
 
 ## How much a baked mesh is scaled per instance; ForestGen reads it when it
@@ -23,20 +24,36 @@ const SIZE_RANGE := Vector2(0.8, 1.4)
 ## stencil's leaf shape instead of leaving the silhouette to the geometry.
 const OPAQUE_UV := Rect2(0.42, 0.15, 0.16, 0.68)
 
-const GRASS_COLOR := Color(0.30, 0.50, 0.22)
-const GRASS_TIP_COLOR := Color(0.52, 0.58, 0.26)
+## How many blades one patch holds. A patch is one instance of one baked mesh --
+## ForestGen plants patches, not blades -- and a batch of blades in one instance
+## is what makes a dense stand affordable: the triangles are the same either way,
+## but every extra instance costs a transform and a ground raycast on top of
+## them.
+const PATCH_BLADES := Vector2i(20, 32)
+
+## How far a patch's blade bases are spread, in metres: the radius of ground one
+## patch covers. ForestCell.MIN_UNDERGROWTH_GAP_M is the spacing of the patches
+## themselves and is kept near this, so the two have to be changed together.
+const PATCH_RADIUS_M := 1.0
+
+const GRASS_COLOR := Color(0.1, 0.2, 0.1)
+const GRASS_TIP_COLOR := Color(0.2, 0.4, 0.1)
 const FERN_COLOR := Color(0.4, 1.0, 0.2) # The "leaves"
 const RACHIS_COLOR := Color(0.34, 0.36, 0.16) # The "stems"
 
 
-## A tuft of grass: a number of blades leaning out from a common base, the
-## tallest around three quarters of a metre before the instance scale.
+## A patch of grass: a batch of blades whose bases are scattered over a small
+## disc of ground rather than all radiating from one point, the tallest around
+## three quarters of a metre before the instance scale. A real tuft covers
+## ground, and a patch wider than one base is also what lets a stand come up
+## dense without one instance per blade.
 static func create_tall_grass_mesh(p_seed: int) -> ArrayMesh:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = p_seed
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	for _blade in rng.randi_range(1, 3):
+	var blades := rng.randi_range(PATCH_BLADES.x, PATCH_BLADES.y)
+	for _blade in blades:
 		_add_grass_blade(st, rng)
 	return _commit(st)
 
@@ -67,8 +84,13 @@ static func _add_grass_blade(st: SurfaceTool, rng: RandomNumberGenerator) -> voi
 	var azimuth := rng.randf() * TAU
 	var outward := Vector3(cos(azimuth), 0.0, sin(azimuth))
 	var side := outward.cross(Vector3.UP)
-	var base := outward * rng.randf_range(0.0, 0.05)
-	var height := rng.randf_range(0.7, 1.1)
+	# The base is drawn from the patch's disc, independent of the lean: a patch
+	# is grass over a piece of ground, not a fan from one stem.
+	var base := _disc_point(rng, PATCH_RADIUS_M)
+	# Shorter at the patch's edge, so a patch has a silhouette instead of a flat
+	# top of equal blades.
+	var height := rng.randf_range(0.7, 1.3) \
+			* lerpf(1.0, 0.6, base.length() / PATCH_RADIUS_M)
 	var reach := rng.randf_range(0.05, 0.20)
 	var width := rng.randf_range(0.02, 0.03)
 	var shade := rng.randf_range(0.8, 1.15)
@@ -88,6 +110,15 @@ static func _add_grass_blade(st: SurfaceTool, rng: RandomNumberGenerator) -> voi
 		_add_strip(st, p0, p1, side * w0, side * w1, t0, t1, normal,
 				GRASS_COLOR.lerp(tip_color, t0) * shade,
 				GRASS_COLOR.lerp(tip_color, t1) * shade)
+
+
+## A point uniformly distributed over a disc of `radius`, in the patch's ground
+## plane. sqrt() on the radius is what makes it uniform: a plain uniform draw
+## piles the bases into the middle of the patch.
+static func _disc_point(rng: RandomNumberGenerator, radius: float) -> Vector3:
+	var angle := rng.randf() * TAU
+	var r := radius * sqrt(rng.randf())
+	return Vector3(cos(angle) * r, 0.0, sin(angle) * r)
 
 
 ## One frond: its rachis, and a pair of pinnae at every step along it. The pinnae

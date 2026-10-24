@@ -64,6 +64,11 @@ enum TreeType {
 ## spruce, maple, aspen, birch, pine) for the adults and for the young ones
 ## separately, and the undergrowth (tall grass and fern).
 ## Nothing here is restricted to one tree per cell -- see _plan() and _extra().
+##
+## Tall grass is counted in **patches**, not blades: one instance of one baked
+## mesh carries a whole patch of blades (TreeGenPresetsUndergrowth), so 0.6
+## patches/m2 is ~8 blades and ~60 triangles per m2 -- the same order as the
+## trees standing over it, which is the budget this density is picked against.
 const FOREST_TYPE_TREES = {
 	ForestType.LeafyForest: {
 		TreeType.Adult: {
@@ -84,7 +89,7 @@ const FOREST_TYPE_TREES = {
 		},
 		TreeType.Undergrowth: {
 			TreeSpecies.Fern: 0.018,
-			TreeSpecies.TallGrass: 0.2,
+			TreeSpecies.TallGrass: 0.3,
 		},
 	},
 	ForestType.ConiferousForest: {
@@ -106,7 +111,7 @@ const FOREST_TYPE_TREES = {
 		},
 		TreeType.Undergrowth: {
 			TreeSpecies.Fern: 0.022,
-			TreeSpecies.TallGrass: 0.04,
+			TreeSpecies.TallGrass: 0.15,
 		},
 	}
 }
@@ -224,11 +229,17 @@ func plant_region(type: ForestType, region: ForestRegion, seed_value: int,
 	var rng := RandomNumberGenerator.new()
 	rng.seed = seed_value
 	for entry in plan:
+		# Undergrowth is recorded in its own grid and spread by its own gap --
+		# see ForestCell.can_plant_undergrowth().
+		var undergrowth: bool = entry.treetype == TreeType.Undergrowth
 		var transforms: Array = []
 		for _i in entry.count + _extra(entry.remainder, rng):
-			var spot := _pick_spot(region, cell, rng)
+			var spot := _pick_spot(region, cell, rng, undergrowth)
 			if spot != Vector2.INF:
-				cell.add_tree(spot)
+				if undergrowth:
+					cell.add_undergrowth(spot)
+				else:
+					cell.add_tree(spot)
 				transforms.append(_tree_transform(spot, entry.treetype, rng))
 		if transforms.is_empty():
 			continue
@@ -376,27 +387,33 @@ static func type_for(feature: OsmFeature) -> ForestType:
 	return ForestType.LeafyForest
 
 
-## The spot for one tree: the best of a batch of candidates, each scored by how
-## far it is from the nearest tree already planted in the cell.
+## The spot for one plant: the best of a batch of candidates, each scored by how
+## far it is from the nearest plant of the same kind already planted in the cell.
 ##
-## A candidate that would break the trunk gap, or that stands on a road or in
-## a lake, is not a candidate at all -- the cell answers that -- so the batch
-## is only ever made of spots a tree could stand in.
+## A candidate that would break the gap, or that stands on a road or in a lake,
+## is not a candidate at all -- the cell answers that -- so the batch is only
+## ever made of spots a plant could stand in.
 ##
 ## The best of several is what keeps a stand from clumping. Without it the
-## trees are a plain random walk, and a wood comes out in patches with bare
+## plants are a plain random walk, and a wood comes out in patches with bare
 ## ground between them rather than evenly spread.
+##
+## `undergrowth` selects the cell's rule: patches of grass keep their distance
+## from other grass only, so they can crowd a trunk and each other, while trees
+## answer to the trunk gap.
 func _pick_spot(region: ForestRegion, cell: ForestCell,
-		rng: RandomNumberGenerator) -> Vector2:
+		rng: RandomNumberGenerator, undergrowth: bool) -> Vector2:
 	var best := Vector2.INF
 	var best_score := -1.0
 	for _candidate in CANDIDATES:
 		var spot := region.sample(rng)
 		if spot == Vector2.INF:
 			continue
-		if not cell.can_plant(spot):
+		if not (cell.can_plant_undergrowth(spot) if undergrowth
+				else cell.can_plant(spot)):
 			continue
-		var score := cell.nearest_tree_distance(spot)
+		var score := cell.nearest_undergrowth_distance(spot) if undergrowth \
+				else cell.nearest_tree_distance(spot)
 		if score > best_score:
 			best_score = score
 			best = spot

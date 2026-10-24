@@ -22,15 +22,13 @@ extends RefCounted
 
 ## The forest this is a part of.
 var feature: OsmFeature = null
-## The pieces of the forest a tree may stand in.
+## The pieces of the forest inside the cell, margin band included -- trees keep
+## out of that band, but that is ForestCell.can_plant()'s rule, not a cut.
 var polygons: Array[PackedVector2Array] = []
-## The forest's area inside the cell, in m2. The tree count is computed from
-## this, so the densities mean trees per square metre of forest.
+## The forest's area inside the cell, in m2. The plant count is computed from
+## this, so the densities mean trees (or patches of undergrowth) per square
+## metre of forest.
 var forest_area := 0.0
-## The area of the pieces above, in m2. It is smaller than `forest_area` by the
-## cell's margin (ForestCell.BORDER_MARGIN_M): the margin is what keeps the
-## trunk gap across a cell boundary, and it costs about a tenth of the cell.
-var plant_area := 0.0
 
 ## The bounding box of the pieces, and their own boxes. The fill of the first
 ## is what decides how many draws a sample needs: a cell that clips the corner
@@ -40,22 +38,26 @@ var _boxes: Array[Rect2] = []
 var _draws := 4
 
 
-## The part of `outline` that falls inside `plant_rect`, as a region ready to
-## sample, together with the area the forest covers inside `cell_rect`.
+## The part of `outline` that falls inside `cell_rect`, as a region ready to
+## sample, together with the area the forest covers there.
 ##
-## The two rects are the cell and the cell's margin (ForestCell.plant_rect()),
-## and the areas they give are different on purpose: the count of trees comes
-## from the forest's own area in the cell, and the trees stand in the smaller
-## one.
+## The region covers the **whole cell, margin and all**. The margin is the band
+## along the cell edge that trees may not stand in (ForestCell.BORDER_MARGIN_M,
+## half the trunk gap per side), and that is ruled by ForestCell.can_plant()
+## rather than cut out of the region here: the undergrowth samples from the same
+## region and has no margin to keep, and a band of ground with no grass in it is
+## a bare lane down every cell boundary -- a visible 32 m grid of squares.
+##
+## The area and the pieces are measured in the same pass and are the same
+## number, since there is only one rect to clip against.
 static func clip(p_feature: OsmFeature, outline: PackedVector2Array,
-		cell_rect: Rect2, plant_rect: Rect2) -> ForestRegion:
+		cell_rect: Rect2) -> ForestRegion:
 	var region := ForestRegion.new()
 	region.feature = p_feature
 	if outline.size() < 3 or cell_rect.get_area() <= 0.0:
 		return region
-	region.forest_area = _clipped_area(outline, cell_rect)
 	var first := true
-	for piece in Geometry2D.intersect_polygons(outline, _ring(plant_rect)):
+	for piece in Geometry2D.intersect_polygons(outline, _ring(cell_rect)):
 		if piece.size() < 3:
 			continue
 		var area := polygon_area(piece)
@@ -64,12 +66,12 @@ static func clip(p_feature: OsmFeature, outline: PackedVector2Array,
 		var box := _points_box(piece)
 		region.polygons.append(piece)
 		region._boxes.append(box)
-		region.plant_area += area
+		region.forest_area += area
 		region._box = box if first else region._box.merge(box)
 		first = false
 	if not region.polygons.is_empty():
 		region._draws = _draws_for(
-				region.plant_area / maxf(region._box.get_area(), 0.0001))
+				region.forest_area / maxf(region._box.get_area(), 0.0001))
 	return region
 
 
@@ -115,18 +117,6 @@ static func _draws_for(fill: float) -> int:
 	if fill >= 0.9 or fill <= 0.0:
 		return 4
 	return clampi(int(ceil(log(0.01) / log(1.0 - fill))), 4, 96)
-
-
-## The area of the outline inside the rect, which is the forest's share of a
-## cell. Clipped rather than counted, because the outline is a ring and the
-## cell cuts it: what is left is not the ring's area times the overlap.
-static func _clipped_area(outline: PackedVector2Array, rect: Rect2) -> float:
-	var total := 0.0
-	for piece in Geometry2D.intersect_polygons(outline, _ring(rect)):
-		if piece.size() < 3:
-			continue
-		total += polygon_area(piece)
-	return total
 
 
 ## A rectangle as a ring of four points, which is what the clipper takes.

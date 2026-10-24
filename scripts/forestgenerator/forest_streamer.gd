@@ -205,8 +205,7 @@ func _plan_for(key: Vector2i) -> CellPlan:
 		var outline := index.entry_points(feature)
 		if outline.size() < 3:
 			continue
-		plan.regions.append(ForestRegion.clip(feature, outline, rect,
-				ForestCell.plant_rect(rect)))
+		plan.regions.append(ForestRegion.clip(feature, outline, rect))
 	_plans[key] = plan
 	return plan
 
