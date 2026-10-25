@@ -254,7 +254,14 @@ func _load_source() -> void:
 ## because a degree of longitude is cos(latitude) times as long as a degree of
 ## latitude, so a cell here is 16.1 m by 30.9 m rather than square.
 func _load_bounds() -> void:
-	bounds = OsmBounds.from_file(BOUNDS_PATH)
+	# bounds = OsmBounds.from_file(BOUNDS_PATH)
+	bounds = OsmBounds.new()
+	bounds.min_lon = 15.748901367187496
+	bounds.min_lat = 58.4697692768012
+	bounds.max_lon = 16.146469116210934
+	bounds.max_lat = 58.64242026484288
+
+	print(bounds, ", bounds.is_valid()=", bounds.is_valid(), ", ", bounds.lon_span(), ", ", bounds.lat_span())
 	if bounds == null or not bounds.is_valid():
 		push_error("Heightmap: no lon/lat extent in %s, cannot scale the terrain" % BOUNDS_PATH)
 		cell_size = Vector2.ONE
