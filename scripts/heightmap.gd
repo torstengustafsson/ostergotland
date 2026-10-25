@@ -19,8 +19,6 @@ extends StaticBody3D
 ## differently and draw the tile grid onto the landscape.
 
 const SOURCE_PATH := "res://assets/heightmap/output_hh.exr"
-## The DEM's lon/lat extent, the georeferencing the EXR itself does not carry.
-const BOUNDS_PATH := "res://assets/heightmap/coordinates_bounds"
 ## Metres per raw height value: the EXR holds millimetres, so this is what turns
 ## a raw value into a real elevation. Nothing else may divide the raw values.
 const HEIGHT_NORMALIZATION := 1000.0
@@ -254,11 +252,11 @@ func _load_source() -> void:
 ## because a degree of longitude is cos(latitude) times as long as a degree of
 ## latitude, so a cell here is 16.1 m by 30.9 m rather than square.
 func _load_bounds() -> void:
-	bounds = OsmBounds.from_file(BOUNDS_PATH)
-	if bounds == null or not bounds.is_valid():
-		push_error("Heightmap: no lon/lat extent in %s, cannot scale the terrain" % BOUNDS_PATH)
-		cell_size = Vector2.ONE
-		return
+	bounds = OsmBounds.new()
+	bounds.min_lon = 15.748901367187496
+	bounds.min_lat = 58.4697692768012
+	bounds.max_lon = 16.146469116210934
+	bounds.max_lat = 58.64242026484288
 	cell_size = bounds.cell_size_m(Vector2i(width, height))
 	var extent_m := cell_size * Vector2(float(width - 1), float(height - 1))
 	print("Heightmap extent: ", extent_m.x, " x ", extent_m.y, " m (",
