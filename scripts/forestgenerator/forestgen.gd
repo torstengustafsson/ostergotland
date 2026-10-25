@@ -46,14 +46,15 @@ enum TreeSpecies {
 	Pine,
 	TallGrass,
 	Fern,
+	Rock,
 	NoSpecies,
 }
 
 ## What a stand plants. A young tree is the same species grown small -- its own
 ## preset, its own mesh, see TreeGenPresetsYoung -- and a stand holds both: the
 ## adults carry the canopy, the young ones the understory under it. Undergrowth
-## is not a tree: its species are the tall grass and the fern, and its mesh comes
-## from TreeGenPresetsUndergrowth.
+## is not a tree: its species are the tall grass, the fern and the boulder, and
+## its mesh comes from TreeGenPresetsUndergrowth.
 enum TreeType {
 	Adult,
 	Young,
@@ -62,13 +63,16 @@ enum TreeType {
 
 ## Each forest type's plants per square metre per species: the six trees (oak,
 ## spruce, maple, aspen, birch, pine) for the adults and for the young ones
-## separately, and the undergrowth (tall grass and fern).
+## separately, and the undergrowth (tall grass, fern and rock).
 ## Nothing here is restricted to one tree per cell -- see _plan() and _extra().
 ##
 ## Tall grass is counted in **patches**, not blades: one instance of one baked
 ## mesh carries a whole patch of blades (TreeGenPresetsUndergrowth), so 0.6
 ## patches/m2 is ~8 blades and ~60 triangles per m2 -- the same order as the
 ## trees standing over it, which is the budget this density is picked against.
+## A rock is counted per boulder, and it shares the undergrowth's 0.35 m gap, so
+## two boulders may overlap: a glacial erratic field is clusters of stones, and
+## the gap is there to spread grass, not to isolate rocks.
 const FOREST_TYPE_TREES = {
 	ForestType.LeafyForest: {
 		TreeType.Adult: {
@@ -80,16 +84,17 @@ const FOREST_TYPE_TREES = {
 			TreeSpecies.Pine: 0.00025,
 		},
 		TreeType.Young: {
-			TreeSpecies.Oak: 0.0006,
-			TreeSpecies.Spruce: 0.0002,
-			TreeSpecies.Maple: 0.0003,
-			TreeSpecies.Aspen: 0.0005,
-			TreeSpecies.Birch: 0.0004,
-			TreeSpecies.Pine: 0.00015,
+			TreeSpecies.Oak: 0.002,
+			TreeSpecies.Spruce: 0.0004,
+			TreeSpecies.Maple: 0.0008,
+			TreeSpecies.Aspen: 0.001,
+			TreeSpecies.Birch: 0.001,
+			TreeSpecies.Pine: 0.0003,
 		},
 		TreeType.Undergrowth: {
 			TreeSpecies.Fern: 0.018,
 			TreeSpecies.TallGrass: 0.3,
+			TreeSpecies.Rock: 0.002,
 		},
 	},
 	ForestType.ConiferousForest: {
@@ -98,20 +103,21 @@ const FOREST_TYPE_TREES = {
 			TreeSpecies.Spruce: 0.0005,
 			TreeSpecies.Maple: 0.00005,
 			TreeSpecies.Aspen: 0.0001,
-			TreeSpecies.Birch: 0.0005,
-			TreeSpecies.Pine: 0.002,
+			TreeSpecies.Birch: 0.001,
+			TreeSpecies.Pine: 0.003,
 		},
 		TreeType.Young: {
 			TreeSpecies.Oak: 0.0001,
-			TreeSpecies.Spruce: 0.0004,
+			TreeSpecies.Spruce: 0.001,
 			TreeSpecies.Maple: 0.00005,
-			TreeSpecies.Aspen: 0.00015,
-			TreeSpecies.Birch: 0.0004,
-			TreeSpecies.Pine: 0.001,
+			TreeSpecies.Aspen: 0.0001,
+			TreeSpecies.Birch: 0.002,
+			TreeSpecies.Pine: 0.004,
 		},
 		TreeType.Undergrowth: {
 			TreeSpecies.Fern: 0.022,
 			TreeSpecies.TallGrass: 0.15,
+			TreeSpecies.Rock: 0.003,
 		},
 	}
 }
@@ -240,7 +246,7 @@ func plant_region(type: ForestType, region: ForestRegion, seed_value: int,
 					cell.add_undergrowth(spot)
 				else:
 					cell.add_tree(spot)
-				transforms.append(_tree_transform(spot, entry.treetype, rng))
+				transforms.append(_tree_transform(spot, entry.species, entry.treetype, rng))
 		if transforms.is_empty():
 			continue
 		var meshes := _baked(_key(entry.species, entry.treetype))
@@ -422,18 +428,27 @@ func _pick_spot(region: ForestRegion, cell: ForestCell,
 
 ## How much a tree's baked size is scaled per instance. A young tree varies
 ## more: the understory is full of saplings of every size, while the adults of
-## a stand are all roughly grown. The undergrowth's range is its own, see
-## TreeGenPresetsUndergrowth.SIZE_RANGE.
+## a stand are all roughly grown. The undergrowth's ranges are their own, see
+## TreeGenPresetsUndergrowth.SIZE_RANGE and ROCK_SIZE_RANGE.
 const ADULT_SIZE_RANGE := Vector2(0.9, 1.1)
 const YOUNG_SIZE_RANGE := Vector2(0.7, 1.3)
 
 
-func _tree_transform(spot: Vector2, type: TreeType, rng: RandomNumberGenerator) -> Transform3D:
+func _tree_transform(spot: Vector2, species: TreeSpecies, type: TreeType,
+		rng: RandomNumberGenerator) -> Transform3D:
 	var origin := Vector3(spot.x, _ground_height_at(spot.x, spot.y), spot.y)
-	var limits := TreeGenPresetsUndergrowth.SIZE_RANGE if type == TreeType.Undergrowth else (YOUNG_SIZE_RANGE if type == TreeType.Young else ADULT_SIZE_RANGE)
+	var limits := _size_range(species, type)
 	var size := rng.randf_range(limits.x, limits.y)
 	var rot := Basis(Vector3.UP, rng.randf_range(0.0, TAU)).scaled(Vector3.ONE * size)
 	return Transform3D(rot, origin)
+
+
+static func _size_range(species: TreeSpecies, type: TreeType) -> Vector2:
+	if type == TreeType.Undergrowth:
+		if species == TreeSpecies.Rock:
+			return TreeGenPresetsUndergrowth.ROCK_SIZE_RANGE
+		return TreeGenPresetsUndergrowth.SIZE_RANGE
+	return YOUNG_SIZE_RANGE if type == TreeType.Young else ADULT_SIZE_RANGE
 
 
 ## One MultiMeshInstance3D holding `transforms` instances of `mesh`, taken from the
@@ -505,6 +520,8 @@ static func _preset(species: TreeSpecies, type: TreeType) -> Callable:
 			return TreeGenPresetsUndergrowth.create_tall_grass_mesh
 		TreeSpecies.Fern:
 			return TreeGenPresetsUndergrowth.create_fern_mesh
+		TreeSpecies.Rock:
+			return TreeGenPresetsUndergrowth.create_rock_mesh
 	print("Warning: Attempted to access unsupported tree (", species, "), using TreeGenPresetsAdult.oak as default..")
 	return TreeGenPresetsAdult.oak
 

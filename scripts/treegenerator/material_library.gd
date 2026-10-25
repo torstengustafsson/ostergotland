@@ -1,12 +1,15 @@
 class_name TreeGenMaterialLibrary
-## Caches and builds the two materials used by TreeGenMesh:
+## Caches and builds the materials used by TreeGenMesh:
 ## - bark: albedo is the tree's bark texture (or a plain color as fallback)
 ## - leaves: alpha-cutout, double-sided, vertex-colored, with either the leaf
 ##   set's own texture or a procedural leaf shape. A ShaderMaterial rather than
 ##   a StandardMaterial3D, because only a shader can tint a back face.
+## - rock: opaque, rough, triplanar-mapped scan of a boulder surface.
 
 const DEFAULT_LEAF_TEXTURE_SIZE := 64
 const LEAF_ALPHA_CUTOFF := 0.4
+
+const ROCK_TEXTURE := preload("res://assets/textures/rock/Rock041_1K-JPG_Color.jpg")
 
 ## What the pale side of every leaf is tinted with: the underside of a fern
 ## pinna, and the side a grass blade leans toward -- tree leaves share the
@@ -26,6 +29,7 @@ const LEAF_SHADER := preload("res://scripts/treegenerator/leaf.gdshader")
 
 static var bark_material_cache: Dictionary = {}
 static var leaf_material_cache: Dictionary = {}
+static var rock_material_cache: Dictionary = {}
 static var procedural_leaf_texture_cache: Dictionary = {}
 
 static func bark_material(texture: Texture2D, fallback_color: Color) -> StandardMaterial3D:
@@ -41,6 +45,28 @@ static func bark_material(texture: Texture2D, fallback_color: Color) -> Standard
 	else:
 		material.albedo_color = fallback_color
 	bark_material_cache[cache_key] = material
+	return material
+
+
+## The rock material: the bark path with the boulder scan on it, plus triplanar
+## mapping. A rock mesh carries no uv because the geometry is a deformed blob --
+## any uv laid out on it stretches round its sides -- so the texture is projected
+## from the vertex position instead, which needs mipmaps on the scan or the
+## projection aliases into diagonal stripes (see assets/textures/rock/*.import).
+static func rock_material() -> StandardMaterial3D:
+	if not rock_material_cache.is_empty():
+		return rock_material_cache.values()[0]
+
+	var material := StandardMaterial3D.new()
+	material.roughness = 0.95
+	material.albedo_texture = ROCK_TEXTURE
+	material.albedo_color = Color.WHITE
+	# The mesh is built around a half-metre radius, so one repeat per metre of
+	# it is uv1_scale 1.0 -- the scan's grain then lands at the size the photo
+	# was taken at.
+	material.uv1_triplanar = true
+	material.uv1_scale = Vector3.ONE
+	rock_material_cache["rock"] = material
 	return material
 
 

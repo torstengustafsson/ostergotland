@@ -1,14 +1,19 @@
 class_name TreeGenPresetsUndergrowth
 extends RefCounted
 
-## Procedurally generated undergrowth: a patch of tall grass and a fern.
+## Procedurally generated undergrowth: a patch of tall grass, a fern, and a
+## boulder.
 ##
-## Both are built directly into a SurfaceTool rather than through TreeGenTree. A
-## patch of grass has no trunk to grow and a fern is a fan of fronds, not a
-## branching skeleton, so the tree generator would contribute little but its
-## bookkeeping.
-## What the two do share with the trees is the leaf material, which is what puts
-## them in the same light and behind the same alpha cutout.
+## The plants are built directly into a SurfaceTool rather than through
+## TreeGenTree. A patch of grass has no trunk to grow and a fern is a fan of
+## fronds, not a branching skeleton, so the tree generator would contribute
+## little but its bookkeeping. What the plants share with the trees is the leaf
+## material, which is what puts them in the same light and behind the same
+## alpha cutout.
+## The boulder is here for the same reason -- it has no skeleton either -- but
+## it is not a plant: it keeps its own shape rules (a lumpy closed blob, flat
+## underneath) and takes the rock material, opaque and triplanar-mapped,
+## rather than the leaf one.
 ##
 ## ForestGen bakes one mesh per variant and instances it, so the geometry here is
 ## paid for at bake time only and each patch can spend a few hundred triangles on
@@ -17,6 +22,16 @@ extends RefCounted
 ## How much a baked mesh is scaled per instance; ForestGen reads it when it
 ## plants an undergrowth stand.
 const SIZE_RANGE := Vector2(0.8, 1.4)
+
+## A boulder's own scale range: the mesh is built around a half-metre radius, so
+## this draws anything from a half-metre stone to a two-metre boulder. It is
+## wider than the plants' range on purpose -- a field of identical footballs is
+## what a boulder field must not look like, and size is most of the difference
+## between one boulder and the next.
+const ROCK_SIZE_RANGE := Vector2(1.0, 2.2)
+
+## The radius a boulder is built at, before the instance scale.
+const ROCK_RADIUS_M := 1.0
 
 ## Every strip here -- the grass blades, the fern's rachis and its pinnae --
 ## samples the middle of the leaf material's stencil, where its ellipse is opaque
@@ -74,6 +89,77 @@ static func create_fern_mesh(p_seed: int) -> ArrayMesh:
 				+ rng.randf_range(-0.8, 0.8)
 		_add_frond(st, rng, azimuth)
 	return _commit(st)
+
+
+## A boulder: a lumpy closed blob over a flat base, ~80 triangles. It is a
+## lat-long sphere whose radius is pushed out by a few random lobes, squashed
+## and then cut off underneath, so it sits in the ground the way a glacial
+## erratic does rather than balancing on a point.
+##
+## The triangles are emitted with unshared vertices and flat normals: a boulder
+## at this budget is faceted, and the facets are what make it read as broken
+## rock rather than as a lump of clay. It gets the rock material, not the leaf
+## one -- opaque, triplanar-mapped, so the mesh carries no uv at all.
+static func create_rock_mesh(p_seed: int) -> ArrayMesh:
+	const SEGS := 8
+	const RINGS := 6
+	var rng := RandomNumberGenerator.new()
+	rng.seed = p_seed
+	# Three lobes break the sphere's silhouette from every angle without
+	# turning it into a star; each is a smooth bump toward one random direction.
+	var lobes: Array[Vector3] = []
+	var amps: Array[float] = []
+	for _i in 3:
+		lobes.append(Vector3(rng.randf_range(-1.0, 1.0), rng.randf_range(-1.0, 1.0),
+				rng.randf_range(-1.0, 1.0)).normalized())
+		amps.append(rng.randf_range(0.25, 0.5))
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var rings: Array = []
+	for band in RINGS - 1:
+		var theta := PI * float(band + 1) / float(RINGS)
+		var row: Array = []
+		for seg in SEGS:
+			var phi := TAU * float(seg) / float(SEGS)
+			row.append(_rock_point(Vector3(sin(theta) * cos(phi), cos(theta),
+					sin(theta) * sin(phi)), lobes, amps))
+		rings.append(row)
+	var top := _rock_point(Vector3.UP, lobes, amps)
+	var bottom := _rock_point(Vector3.DOWN, lobes, amps)
+	# Winding is clockwise seen from outside (Godot's front face), which is what
+	# keeps generate_normals() pointing the facets outward instead of inward --
+	# the inward version renders as a hole in the ground with the light on it.
+	for band in rings.size() - 1:
+		for seg in SEGS:
+			var a: Vector3 = rings[band][seg]
+			var b: Vector3 = rings[band][(seg + 1) % SEGS]
+			var c: Vector3 = rings[band + 1][seg]
+			var d: Vector3 = rings[band + 1][(seg + 1) % SEGS]
+			for vertex: Vector3 in [a, c, d, a, d, b]:
+				st.add_vertex(vertex)
+	for seg in SEGS:
+		for vertex: Vector3 in [top, rings[0][seg], rings[0][(seg + 1) % SEGS]]:
+			st.add_vertex(vertex)
+		for vertex: Vector3 in [bottom, rings[rings.size() - 1][(seg + 1) % SEGS],
+				rings[rings.size() - 1][seg]]:
+			st.add_vertex(vertex)
+	st.generate_normals()
+	return _commit_rock(st)
+
+
+## One point of a boulder's surface: the sphere's, pushed out by the lobes, then
+## squashed and finally cut off underneath. The cut is last and in world
+## metres, not a fraction of the radius, so the base is flat ground to sit on at
+## every instance size -- and the small sink keeps a scaled-up boulder from
+## hovering where the terrain dips under it.
+static func _rock_point(dir: Vector3, lobes: Array[Vector3],
+		amps: Array[float]) -> Vector3:
+	var radius := ROCK_RADIUS_M
+	for i in lobes.size():
+		radius += ROCK_RADIUS_M * amps[i] * pow(maxf(dir.dot(lobes[i]), 0.0), 2.0)
+	var point := dir * radius
+	point.y = maxf(point.y * 0.7, -0.08)
+	return point
 
 
 ## One blade: a strip that rises and then arches over, tapering to a point. The
@@ -218,4 +304,12 @@ static func _vertex(st: SurfaceTool, vertex: Vector3, uv: Vector2,
 static func _commit(st: SurfaceTool) -> ArrayMesh:
 	var mesh := st.commit()
 	mesh.surface_set_material(0, TreeGenMaterialLibrary.leaf_material(null))
+	return mesh
+
+
+## Gives a finished boulder the rock material: its colour is the scan's, so
+## nothing of it lives in the vertices.
+static func _commit_rock(st: SurfaceTool) -> ArrayMesh:
+	var mesh := st.commit()
+	mesh.surface_set_material(0, TreeGenMaterialLibrary.rock_material())
 	return mesh
