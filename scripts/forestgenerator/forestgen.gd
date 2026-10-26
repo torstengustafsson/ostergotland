@@ -46,6 +46,7 @@ enum TreeSpecies {
 	Pine,
 	TallGrass,
 	Fern,
+	Bilberry,
 	Rock,
 	NoSpecies,
 }
@@ -53,8 +54,8 @@ enum TreeSpecies {
 ## What a stand plants. A young tree is the same species grown small -- its own
 ## preset, its own mesh, see TreeGenPresetsYoung -- and a stand holds both: the
 ## adults carry the canopy, the young ones the understory under it. Undergrowth
-## is not a tree: its species are the tall grass, the fern and the boulder, and
-## its mesh comes from TreeGenPresetsUndergrowth.
+## is not a tree: its species are the tall grass, the fern, the bilberry bush
+## and the boulder, and its mesh comes from TreeGenPresetsUndergrowth.
 enum TreeType {
 	Adult,
 	Young,
@@ -63,16 +64,20 @@ enum TreeType {
 
 ## Each forest type's plants per square metre per species: the six trees (oak,
 ## spruce, maple, aspen, birch, pine) for the adults and for the young ones
-## separately, and the undergrowth (tall grass, fern and rock).
+## separately, and the undergrowth (tall grass, fern, bilberry and rock).
 ## Nothing here is restricted to one tree per cell -- see _plan() and _extra().
 ##
 ## Tall grass is counted in **patches**, not blades: one instance of one baked
 ## mesh carries a whole patch of blades (TreeGenPresetsUndergrowth), so 0.6
 ## patches/m2 is ~8 blades and ~60 triangles per m2 -- the same order as the
 ## trees standing over it, which is the budget this density is picked against.
-## A rock is counted per boulder, and it shares the undergrowth's 0.35 m gap, so
-## two boulders may overlap: a glacial erratic field is clusters of stones, and
-## the gap is there to spread grass, not to isolate rocks.
+## A bilberry is counted per bush, which is what makes it worth its ~270
+## triangles: a bush is a whole dome of stems and leaves, not a tuft, so it is
+## rarer than the grass around it and larger than any one blade of it. It is
+## commoner in the coniferous wood, where bilberry carpets are the ground
+## cover. A rock is counted per boulder, and it shares the undergrowth's 0.35 m
+## gap, so two boulders may overlap: a glacial erratic field is clusters of
+## stones, and the gap is there to spread grass, not to isolate rocks.
 const FOREST_TYPE_TREES = {
 	ForestType.LeafyForest: {
 		TreeType.Adult: {
@@ -94,6 +99,7 @@ const FOREST_TYPE_TREES = {
 		TreeType.Undergrowth: {
 			TreeSpecies.Fern: 0.018,
 			TreeSpecies.TallGrass: 0.3,
+			TreeSpecies.Bilberry: 0.01,
 			TreeSpecies.Rock: 0.002,
 		},
 	},
@@ -116,7 +122,8 @@ const FOREST_TYPE_TREES = {
 		},
 		TreeType.Undergrowth: {
 			TreeSpecies.Fern: 0.022,
-			TreeSpecies.TallGrass: 0.15,
+			TreeSpecies.TallGrass: 0.05,
+			TreeSpecies.Bilberry: 0.2,
 			TreeSpecies.Rock: 0.003,
 		},
 	}
@@ -169,8 +176,9 @@ const CANDIDATES := 12
 ## does not leave hundreds of nodes parked for the rest of the session.
 const POOL_MAX := 96
 
-## Tags that mean coniferous in OSM's leaf_type (and species) vocabulary.
-const CONIFEROUS := ["needleleaved", "spruce", "pine", "conifer"]
+## Tags in OSM's leaf_type (and species) vocabulary.
+const CONIFEROUS := ["needleleaved"]
+const LEAFY := ["broadleaved", "mixed"]
 
 ## How far above and below a spot to cast for the ground, in metres. It has to
 ## clear the tallest terrain.
@@ -393,7 +401,10 @@ static func type_for(feature: OsmFeature) -> ForestType:
 	for conifer in CONIFEROUS:
 		if leaf.contains(conifer):
 			return ForestType.ConiferousForest
-	return ForestType.LeafyForest
+	for leafy in LEAFY:
+		if leaf.contains(leafy):
+			return ForestType.LeafyForest
+	return ForestType.ConiferousForest
 
 
 ## The spot for one plant: the best of a batch of candidates, each scored by how
@@ -466,7 +477,9 @@ static func _reach_m(species: TreeSpecies) -> float:
 		return TreeGenPresetsUndergrowth.ROCK_REACH_M
 	if species == TreeSpecies.Fern:
 		return TreeGenPresetsUndergrowth.FERN_REACH_M
-	return TreeGenPresetsUndergrowth.GRASS_REACH_M
+	if species == TreeSpecies.Bilberry:
+		return TreeGenPresetsUndergrowth.BILBERRY_REACH_M
+	return TreeGenPresetsUndergrowth.GRASS_PATCH_REACH_M
 
 
 ## One MultiMeshInstance3D holding `transforms` instances of `mesh`, taken from the
@@ -538,6 +551,8 @@ static func _preset(species: TreeSpecies, type: TreeType) -> Callable:
 			return TreeGenPresetsUndergrowth.create_tall_grass_mesh
 		TreeSpecies.Fern:
 			return TreeGenPresetsUndergrowth.create_fern_mesh
+		TreeSpecies.Bilberry:
+			return TreeGenPresetsUndergrowth.create_bilberry_mesh
 		TreeSpecies.Rock:
 			return TreeGenPresetsUndergrowth.create_rock_mesh
 	print("Warning: Attempted to access unsupported tree (", species, "), using TreeGenPresetsAdult.oak as default..")

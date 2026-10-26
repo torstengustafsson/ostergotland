@@ -1,36 +1,14 @@
 class_name TreeGenPresetsUndergrowth
 extends RefCounted
 
-## Procedurally generated undergrowth: a patch of tall grass, a fern, and a
-## boulder.
-##
-## The plants are built directly into a SurfaceTool rather than through
-## TreeGenTree. A patch of grass has no trunk to grow and a fern is a fan of
-## fronds, not a branching skeleton, so the tree generator would contribute
-## little but its bookkeeping. What the plants share with the trees is the leaf
-## material, which is what puts them in the same light and behind the same
-## alpha cutout.
-## The boulder is here for the same reason -- it has no skeleton either -- but
-## it is not a plant: it keeps its own shape rules (a lumpy closed blob, flat
-## underneath) and takes the rock material, opaque and triplanar-mapped,
-## rather than the leaf one.
-##
-## ForestGen bakes one mesh per variant and instances it, so the geometry here is
-## paid for at bake time only and each patch can spend a few hundred triangles on
-## looking like a plant rather than like a billboard.
+## Procedurally generated undergrowth. The plants are built directly into a
+## SurfaceTool rather than through TreeGenTree.
 
 ## How much a baked mesh is scaled per instance; ForestGen reads it when it
 ## plants an undergrowth stand.
 const SIZE_RANGE := Vector2(0.8, 1.4)
 
-## A boulder's own scale range: the mesh is built around a half-metre radius, so
-## this draws anything from a half-metre stone to a two-metre boulder. It is
-## wider than the plants' range on purpose -- a field of identical footballs is
-## what a boulder field must not look like, and size is most of the difference
-## between one boulder and the next.
 const ROCK_SIZE_RANGE := Vector2(1.0, 2.2)
-
-## The radius a boulder is built at, before the instance scale.
 const ROCK_RADIUS_M := 1.0
 
 ## Every strip here -- the grass blades, the fern's rachis and its pinnae --
@@ -39,56 +17,35 @@ const ROCK_RADIUS_M := 1.0
 ## stencil's leaf shape instead of leaving the silhouette to the geometry.
 const OPAQUE_UV := Rect2(0.42, 0.15, 0.16, 0.68)
 
-## How many blades one patch holds. A patch is one instance of one baked mesh --
-## ForestGen plants patches, not blades -- and a batch of blades in one instance
-## is what makes a dense stand affordable: the triangles are the same either way,
-## but every extra instance costs a transform and a ground raycast on top of
-## them.
-const PATCH_BLADES := Vector2i(20, 32)
+const GRASS_PATCH_BLADES := Vector2i(20, 32)
+const GRASS_PATCH_RADIUS_M := 1.0
+const GRASS_BLADE_LEAN_RANGE := Vector2(0.05, 0.20)
+const GRASS_BLADE_WIDTH_RANGE := Vector2(0.02, 0.03)
 
-## How far a patch's blade bases are spread, in metres: the radius of ground one
-## patch covers. ForestCell.MIN_UNDERGROWTH_GAP_M is the spacing of the patches
-## themselves and is kept near this, so the two have to be changed together.
-const PATCH_RADIUS_M := 1.0
+const BILBERRY_BUSH_STEMS := Vector2i(12, 20)
+const BILBERRY_BUSH_RADIUS_M := 1.0
+const BILBERRY_STEM_HEIGHT_RANGE := Vector2(0.5, 0.8)
+const BILBERRY_STEM_LEAN_RANGE := Vector2(0.05, 0.15)
+const BILBERRY_LEAF_LENGTH_RANGE := Vector2(0.1, 0.15)
+const BILBERRY_BERRIES_PER_STEM := Vector2i(2, 4)
+const BILBERRY_BERRY_RADIUS_M := 0.03
+const BILBERRY_BERRY_JITTER := Vector2(0.8, 1.25)
+const BILBERRY_STENCIL := Vector2(0.34, 0.44)
 
-## How far a blade may lean past its own base, and how wide its strip is at the
-## base, in metres: the ranges _add_grass_blade() draws from, kept here because
-## GRASS_REACH_M adds them up and has to see the same numbers the blade does.
-const BLADE_LEAN_RANGE := Vector2(0.05, 0.20)
-const BLADE_WIDTH_RANGE := Vector2(0.02, 0.03)
-
-## How far a grass patch's geometry reaches from its origin, in metres, at the
-## largest instance size. ForestCell holds a full CLEARANCE_M between this and
-## anything drawn on the ground -- otherwise the blades lean out over the
-## tarmac or the waterline while the patch's origin sits clear of it, and the
-## plant stands on what it is not allowed to stand on.
-##
-## It is arithmetic over the blade's own numbers rather than a measurement: a
-## base on the rim of the patch, leaning its full BLADE_LEAN_RANGE.y out, plus
-## BLADE_WIDTH_RANGE.y for the strip's half-width, times SIZE_RANGE.y. Baked
-## meshes measured 1.107 of local reach over 500 seeds, under the 1.23 this
-## allows -- the extra is the base-at-the-rim case that sampling rarely hits.
-const GRASS_REACH_M := (PATCH_RADIUS_M + BLADE_LEAN_RANGE.y + BLADE_WIDTH_RANGE.y) \
-		* SIZE_RANGE.y
-
-## The fern's reach at the largest instance size: fronds radiate from a crown
-## and their pinnae reach sideways, so there is no disc to add up. Measured at
-## 1.194 of local reach over 500 seeds (1.67 at SIZE_RANGE.y); the arithmetic
-## worst case -- longest rachis at the widest angle, biggest pinna widest too --
-## is about 1.5 local, and this holds to that: 1.5 * SIZE_RANGE.y.
+## Each object has a reach at the largest instance size
+const GRASS_PATCH_REACH_M := (GRASS_PATCH_RADIUS_M + GRASS_BLADE_LEAN_RANGE.y + GRASS_BLADE_WIDTH_RANGE.y) * SIZE_RANGE.y
 const FERN_REACH_M := 2.1
-
-## The boulder's reach at the largest instance size: ROCK_RADIUS_M pushed out
-## by three lobes of up to 0.5 each, times ROCK_SIZE_RANGE.y. Measured at 1.541
-## of local reach over 3000 seeds (3.39 at ROCK_SIZE_RANGE.y). The lobes summing
-## to their full 2.5 m would need all three aimed the same way, which is why
-## this is the measured worst with room on top rather than 5.5.
 const ROCK_REACH_M := 3.6
+const BILBERRY_REACH_M := (BILBERRY_BUSH_RADIUS_M + BILBERRY_STEM_LEAN_RANGE.y \
+		+ BILBERRY_LEAF_LENGTH_RANGE.y + BILBERRY_BERRY_RADIUS_M * BILBERRY_BERRY_JITTER.y) * SIZE_RANGE.y
 
 const GRASS_COLOR := Color(0.1, 0.2, 0.1)
 const GRASS_TIP_COLOR := Color(0.2, 0.4, 0.1)
 const FERN_COLOR := Color(0.4, 1.0, 0.2) # The "leaves"
 const RACHIS_COLOR := Color(0.34, 0.36, 0.16) # The "stems"
+const BILBERRY_LEAF_COLOR := Color(0.25, 0.55, 0.15)
+const BILBERRY_STEM_COLOR := Color(0.2, 0.3, 0.1)
+const BILBERRY_BERRY_COLOR := Color(0.18, 0.22, 0.7)
 
 
 ## A patch of grass: a batch of blades whose bases are scattered over a small
@@ -101,7 +58,7 @@ static func create_tall_grass_mesh(p_seed: int) -> ArrayMesh:
 	rng.seed = p_seed
 	var st := SurfaceTool.new()
 	st.begin(Mesh.PRIMITIVE_TRIANGLES)
-	var blades := rng.randi_range(PATCH_BLADES.x, PATCH_BLADES.y)
+	var blades := rng.randi_range(GRASS_PATCH_BLADES.x, GRASS_PATCH_BLADES.y)
 	for _blade in blades:
 		_add_grass_blade(st, rng)
 	return _commit(st)
@@ -181,6 +138,26 @@ static func create_rock_mesh(p_seed: int) -> ArrayMesh:
 	return _commit_rock(st)
 
 
+## A bilberry bush: a low dome of stems spreading from one root, each carrying
+## paired leaves and hanging a few berries underneath them. Like the grass and
+## the fern its colour is in the vertices and its shape is in the geometry -- but
+## the berries sample the leaf stencil's whole 0..1 uv, so the stencil's ellipse
+## cuts them to a blob instead of leaving them a rectangle.
+static func create_bilberry_mesh(p_seed: int) -> ArrayMesh:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = p_seed
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var stems := rng.randi_range(BILBERRY_BUSH_STEMS.x, BILBERRY_BUSH_STEMS.y)
+	var first := rng.randf() * TAU
+	# Evenly spaced like the fern's fronds, or the bush comes up lopsided.
+	for stem in stems:
+		var azimuth := first + TAU * float(stem) / float(stems) \
+				+ rng.randf_range(-0.6, 0.6)
+		_add_bilberry_stem(st, rng, azimuth)
+	return _commit(st)
+
+
 ## One point of a boulder's surface: the sphere's, pushed out by the lobes, then
 ## squashed and finally cut off underneath. The cut is last and in world
 ## metres, not a fraction of the radius, so the base is flat ground to sit on at
@@ -196,6 +173,123 @@ static func _rock_point(dir: Vector3, lobes: Array[Vector3],
 	return point
 
 
+## One stem: it rises and leans out in a straight line, carrying a pair of
+## leaves at every joint above the ground and hanging its berries underneath
+## them.
+static func _add_bilberry_stem(st: SurfaceTool, rng: RandomNumberGenerator,
+		azimuth: float) -> void:
+	const SEGMENTS := 4
+	var outward := Vector3(cos(azimuth), 0.0, sin(azimuth))
+	var side := outward.cross(Vector3.UP)
+	# From the bush's disc rather than its root, so a bush covers a piece of
+	# ground the way a patch of grass does instead of radiating from one point.
+	var base := _disc_point(rng, BILBERRY_BUSH_RADIUS_M)
+	var height := rng.randf_range(BILBERRY_STEM_HEIGHT_RANGE.x, BILBERRY_STEM_HEIGHT_RANGE.y)
+	var lean := rng.randf_range(BILBERRY_STEM_LEAN_RANGE.x, BILBERRY_STEM_LEAN_RANGE.y)
+	var normal := (Vector3.UP + outward * 0.3).normalized()
+	var shade := rng.randf_range(0.85, 1.1)
+	var stem_color := BILBERRY_STEM_COLOR * shade
+	for segment in SEGMENTS:
+		var t0 := float(segment) / float(SEGMENTS)
+		var t1 := float(segment + 1) / float(SEGMENTS)
+		var p0 := _bilberry_point(base, outward, height, lean, t0)
+		var p1 := _bilberry_point(base, outward, height, lean, t1)
+		var w0 := maxf(0.012 * (1.0 - t0 * 0.6), 0.002)
+		var w1 := maxf(0.012 * (1.0 - t1 * 0.6), 0.002)
+		_add_strip(st, p0, p1, side * w0, side * w1, 0.0, 1.0, normal,
+				stem_color, stem_color)
+		# The first joint is at ground level, where a leaf would be buried.
+		if segment > 0:
+			# A pair per joint, facing opposite ways along the stem.
+			for side_sign: float in [-1.0, 1.0]:
+				var leaf_out := (side * side_sign * 0.8 + outward * 0.3
+						+ Vector3.UP * 0.5).normalized()
+				_add_bilberry_leaf(st, rng, p0, leaf_out,
+						rng.randf_range(BILBERRY_LEAF_LENGTH_RANGE.x, BILBERRY_LEAF_LENGTH_RANGE.y),
+						normal)
+	# A leaf at the very tip too, angled up along the stem, so a stem does not
+	# end on a bare point above its own foliage.
+	_add_bilberry_leaf(st, rng, _bilberry_point(base, outward, height, lean, 1.0),
+			(outward * 0.3 + Vector3.UP).normalized(),
+			rng.randf_range(BILBERRY_LEAF_LENGTH_RANGE.x, BILBERRY_LEAF_LENGTH_RANGE.y) * 0.8, normal)
+	var berries := rng.randi_range(BILBERRY_BERRIES_PER_STEM.x, BILBERRY_BERRIES_PER_STEM.y)
+	for _berry in berries:
+		var t := rng.randf_range(0.45, 0.95)
+		# Hung just below the stem, which is where a bilberry's berry hangs --
+		# under the leaf that shades it, not poking out of the bush's crown.
+		var at := _bilberry_point(base, outward, height, lean, t) \
+				+ Vector3.DOWN * BILBERRY_BERRY_RADIUS_M * 1.4
+		_add_berry(st, rng, at)
+
+
+## Where a stem is at `t` along it: a straight lean out with no arch. A
+## bilberry's stem is angular and bends at its joints rather than curving over,
+## so the bush's dome comes from its stems leaning different ways, not from any
+## one of them curling.
+static func _bilberry_point(base: Vector3, outward: Vector3, height: float,
+		lean: float, t: float) -> Vector3:
+	return base + outward * (lean * t) + Vector3.UP * (height * t)
+
+
+## One leaf: two strips so it is widest in the middle and tapers at both ends,
+## which is the bilberry's oval rather than the fern's pointed pinna.
+static func _add_bilberry_leaf(st: SurfaceTool, rng: RandomNumberGenerator,
+		root: Vector3, outward: Vector3, length: float, normal: Vector3) -> void:
+	var across := outward.cross(Vector3.UP).normalized()
+	var color := BILBERRY_LEAF_COLOR * rng.randf_range(0.85, 1.15)
+	var width := length * 0.45
+	var mid := root + outward * (length * 0.5)
+	var tip := root + outward * length
+	_add_strip(st, root, mid, across * (width * 0.5), across * width, 0.0, 0.5,
+			normal, color, color)
+	_add_strip(st, mid, tip, across * width, across * 0.001, 0.5, 1.0,
+			normal, color, color)
+
+
+## One berry: three quads through the same point -- two crossed vertical ones
+## and a horizontal one -- each cut to a blob by the leaf stencil. The crossed
+## pair on its own is a flat disc from straight above, which is most of the
+## angle a player looking down at undergrowth has.
+static func _add_berry(st: SurfaceTool, rng: RandomNumberGenerator,
+		at: Vector3) -> void:
+	var radius := BILBERRY_BERRY_RADIUS_M * rng.randf_range(BILBERRY_BERRY_JITTER.x, BILBERRY_BERRY_JITTER.y)
+	# The quad's own half-size for a berry of this radius: the stencil's ellipse
+	# is stretched back to a circle by the quad's aspect.
+	var half_w := radius / (2.0 * BILBERRY_STENCIL.x)
+	var half_h := radius / (2.0 * BILBERRY_STENCIL.y)
+	# Up-tilted like every other normal here, so a berry catches the sky the
+	# same way the leaves around it do.
+	var normal := (Vector3.UP + Vector3(rng.randf_range(-1.0, 1.0), 0.0,
+			rng.randf_range(-1.0, 1.0)).normalized() * 0.4).normalized()
+	var color := BILBERRY_BERRY_COLOR * rng.randf_range(0.85, 1.15)
+	var azimuth := rng.randf() * TAU
+	var axis := Vector3(cos(azimuth), 0.0, sin(azimuth))
+	var across := axis.cross(Vector3.UP)
+	_add_stencil_quad(st, at, axis, half_w, Vector3.UP, half_h, normal, color)
+	_add_stencil_quad(st, at, across, half_w, Vector3.UP, half_h, normal, color)
+	_add_stencil_quad(st, at, axis, half_w, across, half_h, normal, color)
+
+
+## One quad over the whole leaf stencil, so the stencil's ellipse cuts it to a
+## blob instead of leaving it a rectangle. Its corners are given as two axes
+## through `at`, which is what keeps the ellipse centred on the quad.
+static func _add_stencil_quad(st: SurfaceTool, at: Vector3, axis0: Vector3,
+		half0: float, axis1: Vector3, half1: float, normal: Vector3,
+		color: Color) -> void:
+	var corners: Array[Vector3] = [
+		at - axis0 * half0 - axis1 * half1,
+		at + axis0 * half0 - axis1 * half1,
+		at + axis0 * half0 + axis1 * half1,
+		at - axis0 * half0 + axis1 * half1,
+	]
+	var uvs: Array[Vector2] = [
+		Vector2(0.0, 0.0), Vector2(1.0, 0.0),
+		Vector2(1.0, 1.0), Vector2(0.0, 1.0),
+	]
+	for i: int in [0, 1, 2, 0, 2, 3]:
+		_vertex(st, corners[i], uvs[i], normal, color)
+
+
 ## One blade: a strip that rises and then arches over, tapering to a point. The
 ## rise follows sin(t * PI/2) so the blade stands up before it leans, which is
 ## what separates a blade of grass from a straight spike.
@@ -206,13 +300,13 @@ static func _add_grass_blade(st: SurfaceTool, rng: RandomNumberGenerator) -> voi
 	var side := outward.cross(Vector3.UP)
 	# The base is drawn from the patch's disc, independent of the lean: a patch
 	# is grass over a piece of ground, not a fan from one stem.
-	var base := _disc_point(rng, PATCH_RADIUS_M)
+	var base := _disc_point(rng, GRASS_PATCH_RADIUS_M)
 	# Shorter at the patch's edge, so a patch has a silhouette instead of a flat
 	# top of equal blades.
 	var height := rng.randf_range(0.7, 1.3) \
-			* lerpf(1.0, 0.6, base.length() / PATCH_RADIUS_M)
-	var reach := rng.randf_range(BLADE_LEAN_RANGE.x, BLADE_LEAN_RANGE.y)
-	var width := rng.randf_range(BLADE_WIDTH_RANGE.x, BLADE_WIDTH_RANGE.y)
+			* lerpf(1.0, 0.6, base.length() / GRASS_PATCH_RADIUS_M)
+	var reach := rng.randf_range(GRASS_BLADE_LEAN_RANGE.x, GRASS_BLADE_LEAN_RANGE.y)
+	var width := rng.randf_range(GRASS_BLADE_WIDTH_RANGE.x, GRASS_BLADE_WIDTH_RANGE.y)
 	var shade := rng.randf_range(0.8, 1.15)
 	var normal := (Vector3.UP + outward * 0.3).normalized()
 	var tip_color := GRASS_COLOR.lerp(GRASS_TIP_COLOR, rng.randf_range(0.0, 0.5))
