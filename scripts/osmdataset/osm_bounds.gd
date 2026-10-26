@@ -31,47 +31,6 @@ static func from_dict(data: Dictionary) -> OsmBounds:
 	return b
 
 
-## The `Xmin/Ymin/Xmax/Ymax = <lon/lat>` file the DEM ships with, which is the
-## only place the heightmap's own lon/lat extent is recorded. Returns an empty
-## box (which is_valid() rejects) when the file is missing or unreadable, so a
-## caller can fall back rather than have to check for null.
-static func from_file(path: String) -> OsmBounds:
-	var file := FileAccess.open(path, FileAccess.READ)
-	if file == null:
-		push_warning("OsmBounds: could not read %s" % path)
-		return OsmBounds.new()
-	var b := OsmBounds.new()
-	var found := 0
-	while not file.eof_reached():
-		var line := file.get_line().strip_edges()
-		if line.is_empty() or line.begins_with("#"):
-			continue
-		var parts := line.split("=", false, 1)
-		if parts.size() != 2:
-			continue
-		var key := parts[0].strip_edges().to_lower()
-		var value := parts[1].strip_edges()
-		if not value.is_valid_float():
-			continue
-		match key:
-			"xmin":
-				b.min_lon = value.to_float()
-				found |= 1
-			"ymin":
-				b.min_lat = value.to_float()
-				found |= 2
-			"xmax":
-				b.max_lon = value.to_float()
-				found |= 4
-			"ymax":
-				b.max_lat = value.to_float()
-				found |= 8
-	if found != 15:
-		push_warning("OsmBounds: %s is missing one of Xmin/Ymin/Xmax/Ymax" % path)
-		return OsmBounds.new()
-	return b
-
-
 func is_valid() -> bool:
 	return lon_span() > 0.0 and lat_span() > 0.0
 

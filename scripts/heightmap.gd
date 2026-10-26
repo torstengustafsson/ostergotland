@@ -20,7 +20,7 @@ extends StaticBody3D
 
 const SOURCE_PATH := "res://assets/heightmap/output_hh.exr"
 ## The DEM's lon/lat extent, the georeferencing the EXR itself does not carry.
-const BOUNDS_PATH := "res://assets/heightmap/coordinates_bounds"
+
 ## Metres per raw height value: the EXR holds millimetres, so this is what turns
 ## a raw value into a real elevation. Nothing else may divide the raw values.
 const HEIGHT_NORMALIZATION := 1000.0
@@ -263,7 +263,7 @@ func _load_bounds() -> void:
 
 	print(bounds, ", bounds.is_valid()=", bounds.is_valid(), ", ", bounds.lon_span(), ", ", bounds.lat_span())
 	if bounds == null or not bounds.is_valid():
-		push_error("Heightmap: no lon/lat extent in %s, cannot scale the terrain" % BOUNDS_PATH)
+		push_error("Heightmap: no lon/lat extent in %s, cannot scale the terrain")
 		cell_size = Vector2.ONE
 		return
 	cell_size = bounds.cell_size_m(Vector2i(width, height))
