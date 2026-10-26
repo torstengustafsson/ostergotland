@@ -51,6 +51,40 @@ const PATCH_BLADES := Vector2i(20, 32)
 ## themselves and is kept near this, so the two have to be changed together.
 const PATCH_RADIUS_M := 1.0
 
+## How far a blade may lean past its own base, and how wide its strip is at the
+## base, in metres: the ranges _add_grass_blade() draws from, kept here because
+## GRASS_REACH_M adds them up and has to see the same numbers the blade does.
+const BLADE_LEAN_RANGE := Vector2(0.05, 0.20)
+const BLADE_WIDTH_RANGE := Vector2(0.02, 0.03)
+
+## How far a grass patch's geometry reaches from its origin, in metres, at the
+## largest instance size. ForestCell holds a full CLEARANCE_M between this and
+## anything drawn on the ground -- otherwise the blades lean out over the
+## tarmac or the waterline while the patch's origin sits clear of it, and the
+## plant stands on what it is not allowed to stand on.
+##
+## It is arithmetic over the blade's own numbers rather than a measurement: a
+## base on the rim of the patch, leaning its full BLADE_LEAN_RANGE.y out, plus
+## BLADE_WIDTH_RANGE.y for the strip's half-width, times SIZE_RANGE.y. Baked
+## meshes measured 1.107 of local reach over 500 seeds, under the 1.23 this
+## allows -- the extra is the base-at-the-rim case that sampling rarely hits.
+const GRASS_REACH_M := (PATCH_RADIUS_M + BLADE_LEAN_RANGE.y + BLADE_WIDTH_RANGE.y) \
+		* SIZE_RANGE.y
+
+## The fern's reach at the largest instance size: fronds radiate from a crown
+## and their pinnae reach sideways, so there is no disc to add up. Measured at
+## 1.194 of local reach over 500 seeds (1.67 at SIZE_RANGE.y); the arithmetic
+## worst case -- longest rachis at the widest angle, biggest pinna widest too --
+## is about 1.5 local, and this holds to that: 1.5 * SIZE_RANGE.y.
+const FERN_REACH_M := 2.1
+
+## The boulder's reach at the largest instance size: ROCK_RADIUS_M pushed out
+## by three lobes of up to 0.5 each, times ROCK_SIZE_RANGE.y. Measured at 1.541
+## of local reach over 3000 seeds (3.39 at ROCK_SIZE_RANGE.y). The lobes summing
+## to their full 2.5 m would need all three aimed the same way, which is why
+## this is the measured worst with room on top rather than 5.5.
+const ROCK_REACH_M := 3.6
+
 const GRASS_COLOR := Color(0.1, 0.2, 0.1)
 const GRASS_TIP_COLOR := Color(0.2, 0.4, 0.1)
 const FERN_COLOR := Color(0.4, 1.0, 0.2) # The "leaves"
@@ -177,8 +211,8 @@ static func _add_grass_blade(st: SurfaceTool, rng: RandomNumberGenerator) -> voi
 	# top of equal blades.
 	var height := rng.randf_range(0.7, 1.3) \
 			* lerpf(1.0, 0.6, base.length() / PATCH_RADIUS_M)
-	var reach := rng.randf_range(0.05, 0.20)
-	var width := rng.randf_range(0.02, 0.03)
+	var reach := rng.randf_range(BLADE_LEAN_RANGE.x, BLADE_LEAN_RANGE.y)
+	var width := rng.randf_range(BLADE_WIDTH_RANGE.x, BLADE_WIDTH_RANGE.y)
 	var shade := rng.randf_range(0.8, 1.15)
 	var normal := (Vector3.UP + outward * 0.3).normalized()
 	var tip_color := GRASS_COLOR.lerp(GRASS_TIP_COLOR, rng.randf_range(0.0, 0.5))

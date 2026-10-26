@@ -238,9 +238,12 @@ func plant_region(type: ForestType, region: ForestRegion, seed_value: int,
 		# Undergrowth is recorded in its own grid and spread by its own gap --
 		# see ForestCell.can_plant_undergrowth().
 		var undergrowth: bool = entry.treetype == TreeType.Undergrowth
+		# How far the plant's body reaches from its origin, so that its body and
+		# not just its origin keeps the ground clearance.
+		var reach_m := _reach_m(entry.species) if undergrowth else 0.0
 		var transforms: Array = []
 		for _i in entry.count + _extra(entry.remainder, rng):
-			var spot := _pick_spot(region, cell, rng, undergrowth)
+			var spot := _pick_spot(region, cell, rng, undergrowth, reach_m)
 			if spot != Vector2.INF:
 				if undergrowth:
 					cell.add_undergrowth(spot)
@@ -398,7 +401,9 @@ static func type_for(feature: OsmFeature) -> ForestType:
 ##
 ## A candidate that would break the gap, or that stands on a road or in a lake,
 ## is not a candidate at all -- the cell answers that -- so the batch is only
-## ever made of spots a plant could stand in.
+## ever made of spots a plant could stand in. `reach_m` is how far an
+## undergrowth plant's body reaches from its origin, which the cell adds to the
+## ground clearance; a tree's reach is not counted, so it is 0.
 ##
 ## The best of several is what keeps a stand from clumping. Without it the
 ## plants are a plain random walk, and a wood comes out in patches with bare
@@ -408,14 +413,14 @@ static func type_for(feature: OsmFeature) -> ForestType:
 ## from other grass only, so they can crowd a trunk and each other, while trees
 ## answer to the trunk gap.
 func _pick_spot(region: ForestRegion, cell: ForestCell,
-		rng: RandomNumberGenerator, undergrowth: bool) -> Vector2:
+		rng: RandomNumberGenerator, undergrowth: bool, reach_m: float) -> Vector2:
 	var best := Vector2.INF
 	var best_score := -1.0
 	for _candidate in CANDIDATES:
 		var spot := region.sample(rng)
 		if spot == Vector2.INF:
 			continue
-		if not (cell.can_plant_undergrowth(spot) if undergrowth
+		if not (cell.can_plant_undergrowth(spot, reach_m) if undergrowth
 				else cell.can_plant(spot)):
 			continue
 		var score := cell.nearest_undergrowth_distance(spot) if undergrowth \
@@ -449,6 +454,19 @@ static func _size_range(species: TreeSpecies, type: TreeType) -> Vector2:
 			return TreeGenPresetsUndergrowth.ROCK_SIZE_RANGE
 		return TreeGenPresetsUndergrowth.SIZE_RANGE
 	return YOUNG_SIZE_RANGE if type == TreeType.Young else ADULT_SIZE_RANGE
+
+
+## How far an undergrowth plant's geometry reaches from its origin, in metres, at
+## the largest instance size: what ForestCell adds to the ground clearance, so
+## it is the plant's body that keeps the clearance and not only the origin the
+## placement test measures from. One constant per undergrowth species, derived
+## from its own geometry -- see TreeGenPresetsUndergrowth.GRASS_REACH_M.
+static func _reach_m(species: TreeSpecies) -> float:
+	if species == TreeSpecies.Rock:
+		return TreeGenPresetsUndergrowth.ROCK_REACH_M
+	if species == TreeSpecies.Fern:
+		return TreeGenPresetsUndergrowth.FERN_REACH_M
+	return TreeGenPresetsUndergrowth.GRASS_REACH_M
 
 
 ## One MultiMeshInstance3D holding `transforms` instances of `mesh`, taken from the

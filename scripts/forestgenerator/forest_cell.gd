@@ -45,7 +45,9 @@ const MIN_UNDERGROWTH_GAP_M := 0.35
 const BORDER_MARGIN_M := MIN_TRUNK_GAP_M * 0.5 + 0.05
 
 ## How close to a road, a railway, a watercourse, a lake, a building or a field
-## a tree may stand, in metres. A tree on the tarmac is a tree in the road.
+## a plant may stand, in metres. A tree on the tarmac is a tree in the road.
+## Undergrowth adds its own reach to this (can_plant_undergrowth()), because
+## this is measured to the plant's origin and its body extends past that.
 const CLEARANCE_M := 1.0
 
 ## How far beyond the cell the blockers are gathered from, in metres. It has to
@@ -73,7 +75,7 @@ const NO_PLANT := 1.0e9
 
 ## A thing on the ground a tree may not stand on. A line has a width and is
 ## kept off by that width plus the clearance; an area has none and is simply
-## not to be stood in.
+## not to be stood in. The plant's own reach is added by the caller.
 class Blocker extends RefCounted:
 	var points: PackedVector2Array = PackedVector2Array()
 	var half_width := 0.0
@@ -140,7 +142,7 @@ func gather(index: OsmQuadtree) -> void:
 ## cell boundary, so it is a rule and not something the region is cut by --
 ## see ForestRegion.clip().
 func can_plant(spot: Vector2) -> bool:
-	if not _clear_of_ground(spot, _plant_rect):
+	if not _clear_of_ground(spot, _plant_rect, 0.0):
 		return false
 	return nearest_tree_distance(spot) >= MIN_TRUNK_GAP_M
 
@@ -150,28 +152,35 @@ func can_plant(spot: Vector2) -> bool:
 ## away from the undergrowth only -- not a trunk gap, because grass grows at a
 ## tree's foot.
 ##
+## `reach_m` is how far the plant's own geometry reaches from its origin (see
+## TreeGenPresetsUndergrowth.GRASS_REACH_M and friends), and it is added to the
+## clearance. The clearance alone is measured to the origin, while the blades,
+## fronds and lobes lean out past it: at a bare CLEARANCE_M a patch's origin is
+## a metre from the water and its blades are standing in it.
+##
 ## The whole cell is the point: the margin band along a cell edge is a tenth of
 ## the ground, and grass that stood clear of it would leave a bare lane down
 ## every cell boundary, visible from above as a grid of squares. Overlapping
 ## patches across a boundary are harmless -- two patches of grass do not grow
 ## into each other.
-func can_plant_undergrowth(spot: Vector2) -> bool:
-	if not _clear_of_ground(spot, _rect):
+func can_plant_undergrowth(spot: Vector2, reach_m: float) -> bool:
+	if not _clear_of_ground(spot, _rect, reach_m):
 		return false
 	return nearest_undergrowth_distance(spot) >= MIN_UNDERGROWTH_GAP_M
 
 
 ## The part of the rules that every kind of plant answers to: inside `rect` --
 ## the cell or the cell's margin, depending on the plant -- and clear of
-## everything lying on the ground.
-func _clear_of_ground(spot: Vector2, rect: Rect2) -> bool:
+## everything lying on the ground, with the plant's own reach (`reach_m`, 0 for
+## a tree) standing out from its origin inside that clearance.
+func _clear_of_ground(spot: Vector2, rect: Rect2, reach_m: float) -> bool:
 	if not rect.has_point(spot):
 		return false
 	for blocker in _lines:
-		if _line_blocks(blocker, spot):
+		if _line_blocks(blocker, spot, reach_m):
 			return false
 	for blocker in _areas:
-		if _area_blocks(blocker, spot):
+		if _area_blocks(blocker, spot, reach_m):
 			return false
 	return true
 
@@ -220,23 +229,24 @@ func _record_plant(grid: Dictionary, spot: Vector2) -> void:
 	grid[bucket] = plants
 
 
-## Whether a line blocker reaches `spot`: the line's own width plus the
-## clearance, measured to the line itself.
-static func _line_blocks(blocker: Blocker, spot: Vector2) -> bool:
-	var reach := blocker.half_width + CLEARANCE_M
+## Whether a line blocker reaches `spot`: the line's own width, the clearance
+## and the plant's reach, measured to the line itself.
+static func _line_blocks(blocker: Blocker, spot: Vector2, reach_m: float) -> bool:
+	var reach := blocker.half_width + CLEARANCE_M + reach_m
 	if not blocker.box.grow(reach).has_point(spot):
 		return false
 	return _distance_to_polyline(spot, blocker.points) < reach
 
 
 ## Whether an area blocker reaches `spot`: inside it, or within the clearance
-## of its edge.
-static func _area_blocks(blocker: Blocker, spot: Vector2) -> bool:
-	if not blocker.box.grow(CLEARANCE_M).has_point(spot):
+## and the plant's reach of its edge.
+static func _area_blocks(blocker: Blocker, spot: Vector2, reach_m: float) -> bool:
+	var reach := CLEARANCE_M + reach_m
+	if not blocker.box.grow(reach).has_point(spot):
 		return false
 	if Geometry2D.is_point_in_polygon(spot, blocker.points):
 		return true
-	return _distance_to_polyline(spot, blocker.points) < CLEARANCE_M
+	return _distance_to_polyline(spot, blocker.points) < reach
 
 
 ## Adds one feature to the blockers: an area if it covers the ground inside
