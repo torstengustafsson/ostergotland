@@ -143,8 +143,10 @@ const RANK_BONUS_M := 150.0
 ## The road surfaces, as the three channels of the shader's road look vec3. The
 ## order is that vec3's channel order and is the only place it is written down.
 ##
-## A railway and a watercourse are not in this space: neither has a scan, and both
-## stay a flat colour (see KIND_RAIL / KIND_WATERWAY above).
+## A watercourse is not in this space: it has no scan and stays a flat colour
+## (see KIND_WATERWAY above). A railway is not either, but for the other reason --
+## it is picked by its kind rather than by a surface, and it has exactly one scan,
+## which is RAIL_SCAN below.
 const LOOK_GRAVEL := 0
 const LOOK_SMALL_ASPHALT := 1
 const LOOK_LARGE_ASPHALT := 2
@@ -171,12 +173,45 @@ const ROAD_LOOKS := {
 		"res://assets/textures/ground/Asphalt025C_1K-JPG_Color.jpg"],
 }
 
+## The railway's scan: the uniform it is uploaded as and the file. Bound the same
+## way a road look's is, but it is not one of them and does not go through
+## ROAD_LOOKS, because a road names its own surface and the surface picks the
+## scan, where a railway is picked by KIND_RAIL and has no surface to name. That
+## is also why it is one row rather than a table: there is exactly one railway
+## look. Mirrored by rail_texture / rail_tile_m / rail_tint in ground.gdshader.
+##
+## Which scan goes with the kind is judgement like everywhere else here -- Rails001
+## is slab paving with bands running through it, which is what a railway covers
+## its ground with in this extract whatever the way is tagged `railway=` -- so
+## this one row covers every railway class that is drawn at all (the widthless
+## ones, proposed and platform, never reach the shader) and there is no second
+## rail look for it to fall back to.
+##
+## **The file's orientation matters**, unlike every other scan here: ground.gdshader
+## samples it in the track's own frame rather than in world axes, so its bands lie
+## along the railway instead of cutting across it. Swapping the file for one whose
+## detail runs the other way means reading the new one first, not just replacing
+## the path.
+const RAIL_SCAN := ["rail_texture",
+	"res://assets/textures/ground/Rails001_1K-JPG_Color.jpg"]
+
+## Metres per repeat of that scan along the track. It lives here rather than only
+## in ground.gdshader because both halves need it: the shader divides the uv by
+## it, and _stroke wraps the arc length it carries in line_attrs.z to it, so a
+## second copy of the number would be two places to keep in step. bind() pushes it
+## to the shader, which is what makes this the one that counts.
+const RAIL_TILE_M := 4.0
+
 ## line_attrs.z carries class_rank() plus this times the road's surface look,
 ## because the array is four components and all four are spoken for: (half_width,
 ## kind, look, rank) would need a fifth. The factor only has to clear the highest
 ## rank, and both are unpacked per entry in the shader rather than accumulated
 ## packed, because the rank is summed weighted by coverage and a packed sum could
 ## not be split apart again afterwards.
+##
+## **A KIND_RAIL entry does not use any of this**: with no look and no rank to
+## carry, _stroke puts the rail scan's arc length in z instead. Nothing unpacks z
+## outside the KIND_ROAD branch, which is what makes the slot free.
 const RANK_LOOK_PACK := 4.0
 
 const AREA_BONUS_M := {
@@ -414,6 +449,15 @@ func bind(p_material: ShaderMaterial, p_index: OsmQuadtree) -> void:
 			push_error("OsmGroundData: no road texture at %s" % look[2])
 			continue
 		material.set_shader_parameter(look[1], road_texture)
+	var rail_scan := load(RAIL_SCAN[1]) as Texture2D
+	if rail_scan == null:
+		push_error("OsmGroundData: no rail texture at %s" % RAIL_SCAN[1])
+	else:
+		material.set_shader_parameter(RAIL_SCAN[0], rail_scan)
+	# The tile size from here rather than from the shader's own default, because
+	# _stroke wraps the arc length it packs into line_attrs.z to this same number
+	# -- and the wrap is what keeps that value exact.
+	material.set_shader_parameter("rail_tile_m", RAIL_TILE_M)
 	for patch: Array in FOREST_PATCHES.values():
 		material.set_shader_parameter(patch[0],
 				_make_forest_noise(patch[1], patch[2]))
@@ -487,9 +531,11 @@ func _rebuild(focus: Vector3) -> void:
 ## because it goes into the area arrays instead.
 ##
 ## A road's third component is its surface look packed over its rank (see
-## RANK_LOOK_PACK); a railway or a watercourse has no look, so its rank goes in
-## alone and the shader, which unpacks only inside its KIND_ROAD branch, reads it
-## back as it was.
+## RANK_LOOK_PACK); a watercourse has neither, so its rank goes in alone and the
+## shader, which unpacks only inside its KIND_ROAD branch, reads it back as it was.
+## **A railway puts its scan's arc length in that same component instead**, which
+## is free precisely because a railway has no surface to name and no rank to shade
+## by -- see the note on RAIL_TILE_M and the shader's line_masks for what it buys.
 func _stroke(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 		reach_m: float) -> void:
 	var max_segment_m := MAX_SEGMENT_UNITS * maxf(metres_per_unit.x, metres_per_unit.y)
@@ -506,13 +552,28 @@ func _stroke(features: Array[OsmFeature], kind: int, focus_m: Vector2,
 				continue
 			look = found * RANK_LOOK_PACK
 		var bonus: float = KIND_BONUS_M[kind] + rank * RANK_BONUS_M
-		var attr := Vector4(width * 0.5, float(kind), look + rank, 0.0)
+		var base := Vector4(width * 0.5, float(kind), look + rank, 0.0)
+		# How far along the way the next segment starts, in metres, for the rail
+		# scan's phase -- see the shader's line_masks. Accumulated over *every*
+		# step, including the ones the tests below drop, or the texture would step
+		# sideways wherever a segment was skipped rather than merely leaving a gap.
+		var run := 0.0
 		for i in points.size() - 1:
 			var a := points[i]
 			var b := points[i + 1]
+			var step := a.distance_to(b)
+			var attr := base
+			if kind == KIND_RAIL:
+				# A railway has no surface to name and no rank to shade by, so z
+				# is free here: it carries the arc length at this segment's own
+				# start instead of the look a road would put in it. Wrapped
+				# because the scan tiles, which also keeps a 20 km way from
+				# spending its far end losing precision to a large float.
+				attr.z = run
+				run = fmod(run + step, RAIL_TILE_M)
 			# A two-node way kilometres long is a placeholder, not a shape, and
 			# stroking it paints a perfectly straight stripe to the horizon.
-			if a.distance_to(b) > max_segment_m:
+			if step > max_segment_m:
 				continue
 			var distance := focus_m.distance_to(
 					Geometry2D.get_closest_point_to_segment(focus_m, a, b))

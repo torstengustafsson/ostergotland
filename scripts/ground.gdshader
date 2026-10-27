@@ -93,11 +93,24 @@ uniform sampler2D grass_texture : source_color, repeat_enable;
 uniform sampler2D beach_texture : source_color, repeat_enable;
 
 // One road scan per surface, sampled the same way. Bound from
-// OsmGroundData.ROAD_LOOKS. A railway and a watercourse are deliberately not here:
-// neither has a scan, and both stay a flat colour.
+// OsmGroundData.ROAD_LOOKS. A watercourse is deliberately not here: it has no
+// scan and stays a flat colour.
 uniform sampler2D road_gravel_texture : source_color, repeat_enable;
 uniform sampler2D road_small_texture : source_color, repeat_enable;
 uniform sampler2D road_large_texture : source_color, repeat_enable;
+
+// The railway's own scan, next to the road ones but not one of them. A road
+// names its surface and the surface picks the scan; a railway is picked by its
+// *kind* and has exactly one scan, so it sits out here rather than becoming a
+// fourth channel of the road look vec3 -- which is sized to the three surfaces
+// a highway tag can say and is the channel order OsmGroundData.ROAD_LOOKS is
+// written in. Bound from OsmGroundData.RAIL_SCAN.
+//
+// Sampled in the track's own frame rather than in world axes, so the image's
+// orientation is a real choice and not a detail: Rails001's bands run across the
+// image, i.e. at constant v, and u is what runs along the track -- so the bands
+// come out lying with the railway. Flip u and v and they run across it again.
+uniform sampler2D rail_texture : source_color, repeat_enable;
 
 // Metres one road scan covers, per surface, in the look order above. The uv is
 // world position over this, as it is for the cover kinds, so a road's grain does
@@ -117,10 +130,25 @@ uniform vec3 road_tile_m = vec3(2.0, 4.0, 4.0);
 // whole image, not a number the texture came with.
 uniform vec3 road_tint = vec3(0.83, 0.86, 2.5);
 
+// The railway's tile size and tint, in the same spaces as the road ones. Rails001
+// is a photograph like the road scans and lands brighter than the ground it sits
+// in (its linear mean is 0.236 against ground_color's 0.168), so the tint brings
+// it down onto the terrain's own brightness rather than leaving a pale stripe --
+// the same correction road_tint makes, at 0.71 rather than one factor per surface
+// because there is only one scan to correct. The tile is a track's worth of
+// ground, about as coarse as the asphalt scans, and it is one number because it
+// is square in the *track's* frame -- it scales u and v together, so the scan's
+// own proportions survive whatever angle the track runs at.
+//
+// The default is only a fallback: OsmGroundData.bind() sets it from its own
+// RAIL_TILE_M, because that side wraps the arc length it packs into line_attrs.z
+// to this same number and would otherwise be two copies to keep in step.
+uniform float rail_tile_m = 4.0;
+uniform float rail_tint = 0.71;
+
 uniform vec3 water_color : source_color = vec3(0.0, 0.0, 1.0);
 uniform vec3 ground_color : source_color = vec3(0.25, 0.5, 0.25);
 uniform vec3 hill_color : source_color = vec3(0.35, 0.3, 0.2);
-uniform vec3 rail_color : source_color = vec3(0.5, 0.5, 0.5);
 
 // Metres one ground scan covers, per cover kind, in the channel order above.
 // Small enough that a scan keeps its own sense of scale on the ground, large
@@ -239,15 +267,23 @@ float segment_distance_sq(vec2 p, vec2 a, vec2 b) {
 // service road crossing a tarmac one leaves whichever reaches further under the
 // fragment.
 //
+// `rail_uv` is the rail scan's uv for `p`, in metres, from whichever railway
+// segment covered `p` hardest -- see rail_texture. It is a separate out rather
+// than a fifth component of `masks` because that vec4 is full, and it is only
+// meaningful where `masks.y` is: it defaults to zero so that a fragment with no
+// railway under it never hands the caller a uv it would then sample with.
+//
 // `focus_dist` is how far `p` is from focus_metres and attr.w is how far the
 // segment reaches from the same point, so `focus_dist > attr.w + reach` proves the
 // fragment cannot be within reach of any point on the segment. That is a compare
 // and a subtract against a known distance, where segment_distance_sq below is a
 // dot product, a divide and a lerp: worth doing per entry, since it rejects
 // nearly all of them for nearly every fragment.
-void line_masks(vec2 p, float focus_dist, out vec4 masks, out vec3 looks) {
+void line_masks(vec2 p, float focus_dist, out vec4 masks, out vec3 looks,
+		out vec2 rail_uv) {
 	vec4 found = vec4(0.0);
 	vec3 surfaces = vec3(0.0);
+	vec2 rail = vec2(0.0);
 	for (int i = 0; i < line_count; i++) {
 		vec4 attr = line_attrs[i];
 		float half_width = attr.x;
@@ -274,13 +310,34 @@ void line_masks(vec2 p, float focus_dist, out vec4 masks, out vec3 looks) {
 				surfaces.z = max(surfaces.z, coverage);
 			}
 		} else if (kind == KIND_RAIL) {
-			found.y = max(found.y, coverage);
+			// Written as a compare rather than max() so the winning segment's
+			// frame is captured along with the coverage that wins it: the scan is
+			// laid in the track's own frame, so that frame has to belong to
+			// whichever segment actually covers this fragment and not to the
+			// first one that reached it.
+			if (coverage > found.y) {
+				vec2 origin = line_points[i].xy;
+				vec2 span = line_points[i].zw - origin;
+				vec2 dir = span / max(length(span), 0.0001);
+				// Both halves are measured from the segment's own start, and the
+				// along one is advanced by attr.z -- how far along the way that
+				// start sits, packed there by OsmGroundData._stroke. The arc
+				// length is what stays continuous through a corner, where a
+				// projection onto `dir` does not (and on a curve it is not even
+				// monotone); the start point is what keeps the across axis pinned
+				// to the track's centreline instead of swinging with the world.
+				vec2 from_start = p - origin;
+				rail = vec2(attr.z + dot(from_start, dir),
+						dot(from_start, vec2(-dir.y, dir.x)));
+				found.y = coverage;
+			}
 		} else {
 			found.z = max(found.z, coverage);
 		}
 	}
 	masks = found;
 	looks = surfaces;
+	rail_uv = rail;
 }
 
 
@@ -459,8 +516,9 @@ void fragment() {
 	// all of them and can skip the loops entirely.
 	vec4 lines = vec4(0.0);
 	vec3 road_looks = vec3(0.0);
+	vec2 rail_uv = vec2(0.0);
 	if (focus_dist <= line_reach + FEATHER) {
-		line_masks(p, focus_dist, lines, road_looks);
+		line_masks(p, focus_dist, lines, road_looks, rail_uv);
 	}
 	float area_water = 0.0;
 	vec4 cover = vec4(0.0);
@@ -551,7 +609,27 @@ void fragment() {
 			float rank = clamp(lines.w / max(lines.x, 0.001), 0.0, 1.0);
 			albedo = mix(albedo, road_albedo * mix(0.85, 1.15, rank), lines.x);
 		}
-		albedo = mix(albedo, rail_color, lines.y);
+		// The railway, after the roads and gated on the same mask. It is one
+		// scan rather than a blend, because there is one railway surface to
+		// choose between.
+		//
+		// The uv is a frame on the *track* and not on the world, which is the
+		// whole reason a railway does not share the cover kinds' treatment: the
+		// scan has bands running through it, so world-aligned tiling lays those
+		// bands parallel to the map's axes and they cut across the track at
+		// whatever angle the track happens to run at. line_masks has already
+		// measured both axes from the covering segment's own start and advanced
+		// the along one by the arc length at that start, so what comes out here
+		// is arc length down the path and lateral offset from its centreline --
+		// and both of those run continuously through a corner even though the
+		// tangent does not, which is what makes the bands line up across a turn.
+		//
+		// It is still a property of the world rather than of the camera, so it
+		// does not swim as the camera moves or restart when the arrays repack.
+		if (lines.y > 0.0) {
+			vec3 rail_albedo = texture(rail_texture, rail_uv / rail_tile_m).rgb * rail_tint;
+			albedo = mix(albedo, rail_albedo, lines.y);
+		}
 	}
 	ROUGHNESS = roughness;
 	ALBEDO = albedo;
